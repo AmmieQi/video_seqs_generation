@@ -14,7 +14,7 @@ class BaseOptions():
         self.parser.add_argument('--loadSize', type=int, default=128, help='scale images to this size')
         self.parser.add_argument('--fineSize', type=int, default=128, help='then crop to this size')
         self.parser.add_argument('--input_nc', type=int, default=3, help='# of input image channels')
-        self.parser.add_argument('--latent_nc', type=int, default=4, help='# of encode feature channels')
+        self.parser.add_argument('--latent_nc', type=int, default=8, help='# of encode feature channels')
         self.parser.add_argument('--output_nc', type=int, default=3, help='# of output image channels')
         self.parser.add_argument('--seq_len', type=int, default=10, help='sequence length of input')
         self.parser.add_argument('--seq_stride', type=int, default=8, help='sequence stride of input')

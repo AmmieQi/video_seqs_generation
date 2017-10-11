@@ -748,9 +748,9 @@ class UnetDecoder(nn.Module):
         self.relu = nn.LeakyReLU(0.2,True)#nn.ReLU(True)
         self.tanh = nn.Tanh()
         mult = 2**(num_downs - 2)
-        self.conv = nn.Conv2d(latent_nc, input_nc, kernel_size=3, stride=1,padding=1)
+        #self.conv = nn.Conv2d(latent_nc, input_nc, kernel_size=3, stride=1,padding=1)
 
-        self.deconv_4_1 = nn.ConvTranspose2d(input_nc, ngf*4 , kernel_size=4, stride=2,padding=1)
+        self.deconv_4_1 = nn.ConvTranspose2d(input_nc + latent_nc, ngf*4 , kernel_size=4, stride=2,padding=1)
         self.norm_4 = norm_layer(ngf*4)
         self.deconv_3_1 = nn.ConvTranspose2d(ngf*8, ngf*2 , kernel_size=4, stride=2,padding=1)
         self.norm_3 = norm_layer(ngf*2)
@@ -760,10 +760,10 @@ class UnetDecoder(nn.Module):
         #self.norm_4 = norm_layer(ngf*4)
     def forward(self, inputs,latent):
         if len(self.gpu_ids) > 1 and isinstance(inputs[0].data, torch.cuda.FloatTensor):
-            lout = nn.parallel.data_parallel(self.conv, latent, self.gpu_ids)
-            lout = nn.parallel.data_parallel(self.tanh, lout,self.gpu_ids)
-            input = inputs[-1]*lout
-            out = nn.parallel.data_parallel(self.deconv_4_1, input,self.gpu_ids)
+            #lout = nn.parallel.data_parallel(self.conv, latent, self.gpu_ids)
+            #lout = nn.parallel.data_parallel(self.relu, lout,self.gpu_ids)
+            #input = inputs[-1]+lout
+            out = nn.parallel.data_parallel(self.deconv_4_1, torch.cat([inputs[-1],latent],1),self.gpu_ids)
             out = nn.parallel.data_parallel(self.norm_4, out,self.gpu_ids)
             out = nn.parallel.data_parallel(self.relu, out,self.gpu_ids)
             out = nn.parallel.data_parallel(self.deconv_3_1, torch.cat([inputs[-2],out],1),self.gpu_ids)
@@ -775,11 +775,9 @@ class UnetDecoder(nn.Module):
             out = nn.parallel.data_parallel(self.deconv_1_1, torch.cat([inputs[-4],out],1),self.gpu_ids)
             out = nn.parallel.data_parallel(self.tanh, out,self.gpu_ids)
         else:
-            #print inputs[-1].size()
-            #print latent.size()
-            lout = self.tanh(self.conv(latent))
-            input = inputs[-1]*lout
-            out = self.deconv_4_1(input)#(torch.cat([inputs[-1],latent],1))
+            #lout = self.relu(self.conv(latent))
+            #input = inputs[-1]+lout
+            out = self.deconv_4_1(torch.cat([inputs[-1],latent],1))
             out = self.norm_4(out)
             out = self.relu(out)
             out = self.deconv_3_1(torch.cat([inputs[-2],out],1))
