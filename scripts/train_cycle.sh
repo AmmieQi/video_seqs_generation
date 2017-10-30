@@ -1,1 +1,1 @@
-python train.py --dataroot ./datasets/KTH/train/handwaving --name rec_handwaving_256_multi_d --model cycle --pool_size 100 --which_model_netD Multi_D --no_dropout --no_flip --no_lsgan
+python train.py --dataroot ./datasets/KTH/train/handwaving --name handwaving_3d_128_8_cycle --model cycle --pool_size 100 --which_model_netD n_layers --n_layers_D 3 --no_dropout --no_flip --seq_len 8 --pre_len 8 --latent_nc 0 --display_port 8097 --display_id 1 --gpu_ids 0 --use_cycle --norm batch3d --which_model_E unet_128_3D --which_model_netG unet_128_3D_0 --seq_stride 1

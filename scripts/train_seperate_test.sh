@@ -1,0 +1,1 @@
+python train.py --dataroot ./datasets/KTH/train/handwaving --name handwaving_2d_128_10_offsets_conv3 --model seperate --pool_size 500 --no_dropout --no_flip --gpu_ids 0 --which_model_E unet_128 --which_model_netG unet_128 --which_model_netD n_layers --n_layers_D 3 --display_port 8097 --seq_stride 2

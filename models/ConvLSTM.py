@@ -1,8 +1,8 @@
-# From https://github.com/rogertrullo/pytorch_convlstm.git
+﻿# From https://github.com/rogertrullo/pytorch_convlstm.git
 import torch.nn as nn
 from torch.autograd import Variable
 import torch
-
+from libs.conv_offset2D import ConvOffset2D
 '''def weights_init(m):
     classname = m.__class__.__name__
     if classname.find('Conv') != -1:
@@ -132,7 +132,7 @@ class ResCLSTM_cell(nn.Module):
         self.num_features = num_features
         #self.batch_size=batch_size
         self.padding=(filter_size-1)/2#in this way the output has the same size
-        self.conv = nn.Conv2d(self.input_chans + self.num_features, 4*self.num_features, self.filter_size, 1, self.padding,bias=use_bias)
+        self.conv = nn.Sequential(ConvOffset2D(filters=self.input_chans+self.num_features), nn.Conv2d(self.input_chans + self.num_features, 4*self.num_features, self.filter_size, 1, self.padding,bias=use_bias))
 
     def forward(self, input, hidden_state):
         hidden,c=hidden_state#hidden and c are images with several channels
@@ -145,7 +145,7 @@ class ResCLSTM_cell(nn.Module):
         g=torch.tanh(ag)
 
         next_c=f*c+i*g
-        next_h=hidden + o*torch.tanh(next_c)  ## 
+        next_h=hidden + o*torch.tanh(next_c)  ##
         return next_h, next_c
 
     def init_hidden(self,batch_size):

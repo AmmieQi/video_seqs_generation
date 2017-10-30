@@ -10,12 +10,12 @@ class BaseOptions():
 
     def initialize(self):
         self.parser.add_argument('--dataroot', required=True, help='path to images (should have subfolders train, val, etc)')
-        self.parser.add_argument('--batchSize', type=int, default=10, help='input batch size')
+        self.parser.add_argument('--batchSize', type=int, default=20, help='input batch size')
         self.parser.add_argument('--loadSize', type=int, default=128, help='scale images to this size')
         self.parser.add_argument('--fineSize', type=int, default=128, help='then crop to this size')
-        self.parser.add_argument('--input_nc', type=int, default=3, help='# of input image channels')
+        self.parser.add_argument('--input_nc', type=int, default=1, help='# of input image channels')
         self.parser.add_argument('--latent_nc', type=int, default=8, help='# of encode feature channels')
-        self.parser.add_argument('--output_nc', type=int, default=3, help='# of output image channels')
+        self.parser.add_argument('--output_nc', type=int, default=1, help='# of output image channels')
         self.parser.add_argument('--seq_len', type=int, default=10, help='sequence length of input')
         self.parser.add_argument('--seq_stride', type=int, default=8, help='sequence stride of input')
         self.parser.add_argument('--pre_len', type=int, default=10, help='sequence length of prediction')
@@ -32,7 +32,7 @@ class BaseOptions():
                                  help='chooses which model to use. seperate_train, joint, test')
         #self.parser.add_argument('--which_direction', type=str, default='AtoB', help='AtoB or BtoA')
 	
-        self.parser.add_argument('--nThreads', default=8, type=int, help='# threads for loading data')
+        self.parser.add_argument('--nThreads', default=4, type=int, help='# threads for loading data')
         self.parser.add_argument('--checkpoints_dir', type=str, default='./checkpoints', help='models are saved here')
         self.parser.add_argument('--norm', type=str, default='batch', help='instance normalization or batch normalization')
         self.parser.add_argument('--serial_batches', action='store_true', help='if true, takes images in order to make batches, otherwise takes them randomly')
