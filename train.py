@@ -15,7 +15,7 @@ print("Random Seed: ", opt.manualSeed)
 random.seed(opt.manualSeed)
 torch.manual_seed(opt.manualSeed)
 
-avi2pngs(opt.dataroot)
+avi2pngs(opt)
 
 
 data_loader = CreateDataLoader(opt)

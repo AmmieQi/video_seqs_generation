@@ -1,0 +1,1 @@
+python train.py --dataroot ./datasets/KTH/train/all --name KTH_unet128_10_with_diff_offsets_20171101 --model seperate --pool_size 400 --no_dropout --no_flip --gpu_ids 1 --which_model_E unet_128 --which_model_netG unet_128 --which_model_netD n_layers --n_layers_D 3 --display_port 8098 --seq_stride 5 --batchSize 20 --latent_nc 4

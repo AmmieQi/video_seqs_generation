@@ -681,7 +681,7 @@ class OffsetsPredictor(nn.Module):
 
         mult = 4
         #print 'shape: ',shape,' ,input_nc: ', input_nc, ' ,ngf: ', ngf*mult
-        self.conv_lstm = CLSTM(shape, input_nc*3, filter_size, output_nc*2, nlayers,use_bias)
+        self.conv_lstm = ResCLSTM(shape, input_nc*3, filter_size, output_nc*2, nlayers,use_bias)
 
         #8-->64, 4-->32, output seq_len, batchsize, ngf*8, H, W
         model = []
@@ -812,8 +812,8 @@ class UnetEncoder(nn.Module):
         self.gpu_ids = gpu_ids
         #conv_1 = [nn.Conv2d(input_nc, ngf, kernel_size=3, stride=1,padding=1,bias=use_bias),nn.LeakyReLU(0.2,True)]
         conv_1 = [nn.Conv2d(input_nc, ngf, kernel_size=4, stride=2,padding=1,bias=use_bias),nn.LeakyReLU(0.2,True)]
-        conv_2 = [nn.Conv2d(ngf, ngf*2, kernel_size=3, stride=1,padding=1,bias=use_bias),norm_layer(ngf*2),nn.LeakyReLU(0.2,True)]
-        conv_2 += [nn.Conv2d(ngf*2, ngf*2, kernel_size=4, stride=2,padding=1,bias=use_bias),norm_layer(ngf*2),nn.LeakyReLU(0.2,True)]
+        conv_2 = [nn.Conv2d(ngf, ngf, kernel_size=3, stride=1,padding=1,bias=use_bias),norm_layer(ngf*2),nn.LeakyReLU(0.2,True)]
+        conv_2 += [nn.Conv2d(ngf, ngf*2, kernel_size=4, stride=2,padding=1,bias=use_bias),norm_layer(ngf*2),nn.LeakyReLU(0.2,True)]
         self.conv_1 = nn.Sequential(*conv_1)
         self.conv_2 = nn.Sequential(*conv_2)
         self.conv_3 = nn.Sequential(nn.Conv2d(ngf*2, ngf*4, kernel_size=4, stride=2,padding=1,bias=use_bias),norm_layer(ngf*4),nn.LeakyReLU(0.2,True))
@@ -888,32 +888,37 @@ class UnetDecoder(nn.Module):
         self.deconv_1 = nn.Sequential(*deconv_1)
     def forward(self, inputs,latent,offsets):
 
-        x = inputs[-1]
-        x_shape = x.size()
-        offsets = self._to_bc_h_w_2(offsets, x_shape)
-        x = self._to_bc_h_w(x,x_shape)
-        x_offset = th_batch_map_offsets(x, offsets, grid=self._get_grid(self, x))
-        x_offset = self._to_b_c_h_w(x_offset, x_shape)
-        inputs[-1] = x_offset
+        xl = inputs[-1]#self._transform(self, inputs[-1],offsets[-1])
+        xh = self._transform(self, inputs[-3], offsets[0])
 
         if len(self.gpu_ids) > 1 and isinstance(inputs[0].data, torch.cuda.FloatTensor):
             #lout = nn.parallel.data_parallel(self.conv, latent, self.gpu_ids)
             #lout = nn.parallel.data_parallel(self.relu, lout,self.gpu_ids)
             #input = inputs[-1]+lout
             #out = nn.parallel.data_parallel(self.deconv_5_1, torch.cat([inputs[-1],latent],1),self.gpu_ids)
-            out = nn.parallel.data_parallel(self.deconv_4, torch.cat([inputs[-1],latent],1),self.gpu_ids)
+            out = nn.parallel.data_parallel(self.deconv_4, torch.cat([xl,latent],1),self.gpu_ids)
             out = nn.parallel.data_parallel(self.deconv_3, torch.cat([inputs[-2],out],1),self.gpu_ids)
-            out = nn.parallel.data_parallel(self.deconv_2, torch.cat([inputs[-3],out],1),self.gpu_ids)
+            out = nn.parallel.data_parallel(self.deconv_2, torch.cat([xh,out],1),self.gpu_ids)
             out = nn.parallel.data_parallel(self.deconv_1, torch.cat([inputs[-4],out],1),self.gpu_ids)
         else:
             #lout = self.relu(self.conv(latent))
             #input = inputs[-1]+lout
             #out = self.deconv_5_1(torch.cat([inputs[-1],latent],1))
-            out = self.deconv_4(torch.cat([inputs[-1],latent],1))
+            out = self.deconv_4(torch.cat([xl,latent],1))
             out = self.deconv_3(torch.cat([inputs[-2],out],1))
-            out = self.deconv_2(torch.cat([inputs[-3],out],1))
+            out = self.deconv_2(torch.cat([xh,out],1))
             out = self.deconv_1(torch.cat([inputs[-4],out],1))
         return out
+
+    @staticmethod
+    def _transform(self, x, offsets):
+        x_shape = x.size()
+        offsets = self._to_bc_h_w_2(offsets, x_shape)
+        x = self._to_bc_h_w(x, x_shape)
+        x_offset = th_batch_map_offsets(x, offsets, grid=self._get_grid(self, x))
+        x_offset = self._to_b_c_h_w(x_offset, x_shape)
+        return x_offset
+
 
     @staticmethod
     def _get_grid(self, x):

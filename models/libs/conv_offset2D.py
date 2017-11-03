@@ -182,7 +182,7 @@ def th_batch_map_coordinates(input, coords, order=1):
     idx = th_repeat(torch.arange(0, batch_size), n_coords).long()
     idx = Variable(idx, requires_grad=False)
     if input.is_cuda:
-        idx = idx.cuda(cfg.cuda_num)
+        idx = idx.cuda()#(cfg.cuda_num)
 
     def _get_vals_by_coords(input, coords):
         indices = torch.stack([
@@ -231,7 +231,7 @@ def th_generate_grid(batch_size, input_size, dtype, cuda):
     grid = np_repeat_2d(grid, batch_size)
     grid = torch.from_numpy(grid).type(dtype)
     if cuda:
-        grid = grid.cuda(cfg.cuda_num)
+        grid = grid.cuda()#(cfg.cuda_num)
     return Variable(grid, requires_grad=False)
 
 

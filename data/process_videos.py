@@ -1,15 +1,21 @@
 import os
 from glob import glob
 
-def avi2pngs(dir):
+def avi2pngs(opt):
     #print(dir)
+    dir = opt.dataroot
+    fr = opt.frameRate
+    isize = opt.loadSize
     videos = glob(dir+'/*.avi')
     for video in videos:
         foldername = video[:-4]
         if not os.path.exists(foldername):
             os.makedirs(foldername)
             print 'Processing video',video
-            os.system('ffmpeg -i '+video+' '+foldername+'/\%05d.png -hide_banner')
+	    if fr == 0:
+	        os.system('ffmpeg -i '+video+' -s '+str(isize)+'x'+str(isize)+' -f image2 '+foldername+'/\%05d.jpg -hide_banner')
+	    else:
+                os.system('ffmpeg -i '+video+' -r '+str(fr)+' -s '+str(isize)+'x'+str(isize)+' -f image2 '+foldername+'/\%05d.jpg -hide_banner')
             '''cap = cv2.VideoCapture(video)
             if cap.isOpened():
                 success = True

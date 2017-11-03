@@ -23,7 +23,8 @@ class SeperateModel(BaseModel):
         seq_len = opt.seq_len
         self.seq_len = opt.seq_len
         self.pre_len = opt.pre_len
-        shape = (opt.fineSize/16, opt.fineSize/16)
+        low_shape = (opt.fineSize/16, opt.fineSize/16)
+        high_shape = (opt.fineSize/4, opt.fineSize/4)
         #self.input_seq = self.Tensor(nb, seq_len, opt.input_nc, size, size)
         self.use_cycle = opt.use_cycle
         
@@ -39,12 +40,14 @@ class SeperateModel(BaseModel):
         assert(opt.which_model_netG=='unet_128')
         self.netCE = networks.content_E(opt.input_nc*seq_len, 64,
                                                   opt.ngf, opt.which_model_E, opt.norm, not opt.no_dropout, self.gpu_ids, opt.init_type)
-        self.netOP = networks.offsets_P(shape, seq_len, 64, 64, opt.ngf, opt.norm, not opt.no_dropout, self.gpu_ids, opt.init_type)
+        self.netOPL = networks.offsets_P(low_shape, seq_len, 64, 64, opt.ngf, opt.norm, not opt.no_dropout, self.gpu_ids, opt.init_type)
+        self.netOPH = networks.offsets_P(high_shape, seq_len, opt.ngf*2, opt.ngf*2, opt.ngf, opt.norm, not opt.no_dropout, self.gpu_ids, opt.init_type)
+
         self.netME = networks.motion_E(opt.input_nc, opt.latent_nc,
-                                                opt.ngf/2, 'resnet_6blocks', opt.norm, not opt.no_dropout, self.gpu_ids, opt.init_type)
-        self.netMP = networks.motion_P(shape, seq_len, opt.latent_nc,
+                                                opt.ngf/2, 'resnet_3blocks', opt.norm, not opt.no_dropout, self.gpu_ids, opt.init_type)
+        self.netMP = networks.motion_P(low_shape, seq_len, opt.latent_nc,
                                             opt.latent_nc, opt.ngf, opt.norm, not opt.no_dropout, self.gpu_ids, opt.init_type)
-        self.netG = networks.define_G(shape, seq_len, 64,opt.latent_nc,
+        self.netG = networks.define_G(low_shape, seq_len, 64,opt.latent_nc,
                                             opt.output_nc, opt.ngf,opt.which_model_netG, opt.norm, not opt.no_dropout, self.gpu_ids,opt.init_type)
         if self.isTrain:
             use_sigmoid = opt.no_lsgan
@@ -55,7 +58,8 @@ class SeperateModel(BaseModel):
         if not self.isTrain or opt.continue_train:
             which_epoch = opt.which_epoch
             self.load_network(self.netCE, 'CE', which_epoch)
-            self.load_network(self.netOP, 'OP', which_epoch)
+            self.load_network(self.netOPH, 'OPH', which_epoch)
+            self.load_network(self.netOPL, 'OPL', which_epoch)
             self.load_network(self.netME, 'ME', which_epoch)
             self.load_network(self.netMP, 'MP', which_epoch)
             self.load_network(self.netG, 'G', which_epoch)
@@ -74,7 +78,8 @@ class SeperateModel(BaseModel):
             self.criterionSim = torch.nn.MSELoss()
             # initialize optimizers
             self.optimizer_CE = torch.optim.Adam(self.netCE.parameters(), lr = opt.lr, betas = (opt.beta1, 0.999))
-            self.optimizer_OP = torch.optim.Adam(self.netOP.parameters(), lr = opt.lr, betas = (opt.beta1, 0.999))
+            self.optimizer_OPH = torch.optim.Adam(self.netOPH.parameters(), lr = opt.lr, betas = (opt.beta1, 0.999))
+            self.optimizer_OPL = torch.optim.Adam(self.netOPL.parameters(), lr = opt.lr, betas = (opt.beta1, 0.999))
             self.optimizer_ME = torch.optim.Adam(self.netME.parameters(), lr = opt.lr, betas = (opt.beta1, 0.999))
             self.optimizer_MP = torch.optim.Adam(self.netMP.parameters(), lr = opt.lr, betas = (opt.beta1, 0.999))
             self.optimizer_G = torch.optim.Adam(self.netG.parameters(), lr = opt.lr, betas = (opt.beta1, 0.999))
@@ -82,7 +87,8 @@ class SeperateModel(BaseModel):
             self.optimizers = []
             self.schedulers = []
             self.optimizers.append(self.optimizer_CE)
-            self.optimizers.append(self.optimizer_OP)
+            self.optimizers.append(self.optimizer_OPH)
+            self.optimizers.append(self.optimizer_OPL)
             self.optimizers.append(self.optimizer_ME)
             self.optimizers.append(self.optimizer_MP)
             self.optimizers.append(self.optimizer_G)
@@ -94,8 +100,10 @@ class SeperateModel(BaseModel):
         print('---------- Networks initialized -------------')
         print('------------- Content Encoder ---------------')
         networks.print_network(self.netCE)
-        print('------------ Offsets Predictor --------------')
-        networks.print_network(self.netOP)
+        print('------------ Offsets Predictor Low --------------')
+        networks.print_network(self.netOPL)
+        print('------------ Offsets Predictor High --------------')
+        networks.print_network(self.netOPH)
         print('-------------- Motion Encoder ---------------')
         networks.print_network(self.netME)
         print('------------- Motion Predictor --------------')
@@ -180,31 +188,68 @@ class SeperateModel(BaseModel):
         self.Y_T = torch.cat(self.real_Y,1)
         batch_size = self.real_X[0].size(0)
 
+        self.T = random.randint(0,self.pre_len-1)
+
+
         self.encs = self.netCE.forward(self.X_T)
-        self.encs_y = self.netCE.forward(self.Y_T)
-        self.loss_sim = self.criterionSim(self.encs[-1],Variable(self.encs_y[-1].data))*10
+        #self.encs_y = self.netCE.forward(self.Y_T)
+        #self.loss_sim = self.criterionSim(self.encs[-1],Variable(self.encs_y[-1].data))*10
         ## self.encs[0] is the global feature
-        hidden_state_OP = self.netOP.init_hidden(batch_size)
+        hidden_state_OPL = self.netOPL.init_hidden(batch_size)
+        hidden_state_OPH = self.netOPH.init_hidden(batch_size)
         # global_feature_maps
         #initialization of the Offsets Predictor
-        glfm = self.encs[-1].unsqueeze(1) #[bs,1,nc,s0,s1]
-        init_offsets = Variable(torch.zeros(batch_size,1,glfm.size(2)*2,glfm.size(3),glfm.size(3))).cuda()
-        hidden_state_OP, pred_offsets = self.netOP.forward(torch.cat([glfm,init_offsets],2),hidden_state_OP)
-        self.offsets = [pred_offsets]
+        FL = self.encs[-1].unsqueeze(1) #[bs,1,nc,s0,s1] low level feature
+        HL = self.encs[1].unsqueeze(1) # high level feature
+        init_offsets_l = Variable(torch.zeros(batch_size,1,FL.size(2)*2,FL.size(3),FL.size(3))).cuda()
+        init_offsets_h = Variable(torch.zeros(batch_size,1,HL.size(2)*2,HL.size(3),HL.size(3))).cuda()
+        hidden_state_OPL, pred_offsets_l = self.netOPL.forward(torch.cat([FL,init_offsets_l],2),hidden_state_OPL)
+        self.offsets_l = [pred_offsets_l]
+        hidden_state_OPH, pred_offsets_h = self.netOPH.forward(torch.cat([HL,init_offsets_h],2),hidden_state_OPH)
+        self.offsets_h = [pred_offsets_h]
+
+
         self.motion_codes_y = torch.split(self.netME.forward(self.realY),batch_size,dim=0)  ############################### 1
-        #tmp = Variable(torch.rand(self.motion_codes_y[0].size())).cuda()
-        self.fakes = [self.netG.forward(self.encs,self.motion_codes_y[0].squeeze(1), self.offsets[0].squeeze(1))]
+        
+        '''if self.T == 0:
+            offsets = [self.offsets_h[0].squeeze(1), self.offsets_l[0].squeeze(1)]
+            self.fakes = [self.netG.forward(self.encs,self.motion_codes_y[0].squeeze(1), offsets)]
+            #self.fakes = [self.netG.forward(self.encs,tmp.squeeze(1), self.offsets[0].squeeze(1))]
+            self.loss_gan = self.criterionGAN(self.netD.forward(self.fakes[0]), True)*lambda_gan
+            self.loss_pix = self.criterionPixel(self.fakes[0],self.real_Y[0])*lambda_pix
+        else:
+            for t in range(1,self.T+1):
+                hidden_state_OPL, pred_offsets_l = self.netOPL.forward(torch.cat([FL,pred_offsets_l],2),hidden_state_OPL)
+                self.offsets_l += [pred_offsets_l]
+                hidden_state_OPH, pred_offsets_h = self.netOPH.forward(torch.cat([HL,pred_offsets_h],2),hidden_state_OPH)
+                self.offsets_h += [pred_offsets_h]
+                
+            offsets = [self.offsets_h[self.T].squeeze(1), self.offsets_l[self.T].squeeze(1)]
+            self.fakes = [self.netG.forward(self.encs,self.motion_codes_y[self.T].squeeze(1),offsets)]
+            # self.fakes += [self.netG.forward(self.encs,tmp.squeeze(1),self.offsets[t].squeeze(1))]
+            self.loss_gan = self.criterionGAN(self.netD.forward(self.fakes[0]), True)*lambda_gan
+            self.loss_pix = self.criterionPixel(self.fakes[0],self.real_Y[self.T])*lambda_pix
+            # caculate motion_feats
+        '''
+        
+        offsets = [self.offsets_h[0].squeeze(1), self.offsets_l[0].squeeze(1)]
+        self.fakes = [self.netG.forward(self.encs,self.motion_codes_y[0].squeeze(1), offsets)]
         #self.fakes = [self.netG.forward(self.encs,tmp.squeeze(1), self.offsets[0].squeeze(1))]
         self.loss_gan = self.criterionGAN(self.netD.forward(self.fakes[0]), True)*lambda_gan
         self.loss_pix = self.criterionPixel(self.fakes[0],self.real_Y[0])*lambda_pix
+        
         for t in range(1,self.pre_len):
-            hidden_state_OP, pred_offsets = self.netOP.forward(torch.cat([glfm,pred_offsets],2),hidden_state_OP)
-            self.offsets += [pred_offsets]
-            self.fakes += [self.netG.forward(self.encs,self.motion_codes_y[t].squeeze(1),self.offsets[t].squeeze(1))]
-            #self.fakes += [self.netG.forward(self.encs,tmp.squeeze(1),self.offsets[t].squeeze(1))]
+            hidden_state_OPL, pred_offsets_l = self.netOPL.forward(torch.cat([FL,pred_offsets_l],2),hidden_state_OPL)
+            self.offsets_l += [pred_offsets_l]
+            hidden_state_OPH, pred_offsets_h = self.netOPH.forward(torch.cat([HL,pred_offsets_h],2),hidden_state_OPH)
+            self.offsets_h += [pred_offsets_h]
+                
+            offsets = [self.offsets_h[-1].squeeze(1), self.offsets_l[-1].squeeze(1)]
+            self.fakes += [self.netG.forward(self.encs,self.motion_codes_y[t].squeeze(1),offsets)]
+        
             self.loss_gan += self.criterionGAN(self.netD.forward(self.fakes[t]), True)*lambda_gan
             self.loss_pix += self.criterionPixel(self.fakes[t],self.real_Y[t])*lambda_pix
-        # caculate motion_feats
+        
 
 
         '''self.motion_codes = torch.split(self.netME.forward(self.realX), batch_size,dim=0)
@@ -230,7 +275,7 @@ class SeperateModel(BaseModel):
         #for p in self.netME.parameters(): # reset requires_grad
         #    p.requires_grad = False # they are set to False below in netG update
 
-        p0 = random.randint(0,self.pre_len-1)
+        '''p0 = random.randint(0,self.pre_len-1)
         src_diff = self.fakes[0] - self.fakes[p0]
         tar_diff = self.real_Y[0] - self.real_Y[p0]
         self.loss_dif = self.criteriondiff(src_diff,tar_diff)*lambda_dif/self.pre_len
@@ -240,6 +285,7 @@ class SeperateModel(BaseModel):
             src_diff = self.fakes[t] - self.fakes[pt]
             tar_diff = self.real_Y[t] - self.real_Y[pt]
             self.loss_dif += self.criteriondiff(src_diff,tar_diff)*lambda_dif/self.pre_len
+        '''
         #self.fake_feats = self.netME.forward(fakes)
         #self.real_feats = Variable(torch.cat(self.motion_codes_y,0).data)
         #all_pre_feats = torch.cat(self.pre_feats,0)
@@ -250,9 +296,8 @@ class SeperateModel(BaseModel):
         #self.loss_pre = self.criterionPre(all_pre_feats, self.real_feats)*lambda_pre
 
         #self.loss_dif.backward()
-        self.loss_G = self.loss_pix + self.loss_gan + self.loss_dif #+ self.loss_sim #+ self.loss_fea #+ self.loss_pre
+        self.loss_G = self.loss_pix + self.loss_gan #+ self.loss_dif #+ self.loss_sim #+ self.loss_fea #+ self.loss_pre
         self.loss_G.backward()
-        #print 'generation loss: ', self.loss_gan.data[0], ' pixel loss: ', self.loss_pix.data[0], ' feature loss: ', self.loss_fea.data[0], ' overall loss: ', self.loss_G.data[0]
 
     def backward_cycle(self):
         #lambda_idt = self.opt.identity
@@ -403,7 +448,8 @@ class SeperateModel(BaseModel):
         self.forward_G()
         #Encoder
         self.optimizer_CE.zero_grad()
-        self.optimizer_OP.zero_grad()
+        self.optimizer_OPH.zero_grad()
+        self.optimizer_OPL.zero_grad()
         self.optimizer_ME.zero_grad()
         self.optimizer_MP.zero_grad()
         # Decoder
@@ -416,7 +462,8 @@ class SeperateModel(BaseModel):
             self.backward_G()
 
         self.optimizer_CE.step()
-        self.optimizer_OP.step()
+        self.optimizer_OPH.step()
+        self.optimizer_OPL.step()
         self.optimizer_ME.step()
         self.optimizer_MP.step()
 
@@ -457,10 +504,10 @@ class SeperateModel(BaseModel):
         GAN = self.loss_gan.data[0]
         #FEA = self.loss_fea.data[0]
         PIX = self.loss_pix.data[0]
-        DIF = self.loss_dif.data[0]
+        #DIF = self.loss_dif.data[0]
         DES = self.loss_D.data[0]
-        SIM = self.loss_sim.data[0]
-        return OrderedDict([('G', GAN), ('Pixel', PIX), ('Diff',DIF), ('D',DES),('SIM',SIM)])
+        SIM = 0 #self.loss_sim.data[0]
+        return OrderedDict([('G', GAN), ('Pixel', PIX), ('D',DES),('SIM',SIM)])
         #return OrderedDict([('Prediction', PRE), ('G', GAN), ('Feature', FEA), ('Pixel', PIX),('Diff',DIF), ('D',DES)])
 
     def get_current_visuals(self):
@@ -474,20 +521,27 @@ class SeperateModel(BaseModel):
                 fake_image = util.tensor2im(self.fakes_x[i].data)
                 images += [(fake_name,fake_image)]
 
-        for j in xrange(self.pre_len):
+        real_name = 'frame_gt'+str(self.seq_len+self.T)
+        real_image = util.tensor2im(self.real_Y[self.T].data)
+        fake_name = 'fake_pred'+str(self.seq_len+self.T)
+        fake_image = util.tensor2im(self.fakes[self.T].data)
+        images += [(real_name, real_image),(fake_name,fake_image)]
+
+        '''for j in xrange(self.pre_len):
             real_name = 'frame_'+str(self.seq_len+j)
             real_image = util.tensor2im(self.real_Y[j].data)
             fake_name = 'fake_'+str(self.seq_len+j)
             fake_image = util.tensor2im(self.fakes[j].data)
             images += [(real_name, real_image),(fake_name,fake_image)]
-
+        '''
         return OrderedDict(images)
         #return OrderedDict([('real_Began', real_Y_0), ('Pred_Began', fake_Y_0), ('real_End', real_Y_E),
         #                    ('Pred_End', fake_Y_E)])
 
     def save(self, label):
         self.save_network(self.netCE, 'CE', label, self.gpu_ids)
-        self.save_network(self.netOP, 'OP', label, self.gpu_ids)
+        self.save_network(self.netOPH, 'OPH', label, self.gpu_ids)
+        self.save_network(self.netOPL, 'OPL', label, self.gpu_ids)
         self.save_network(self.netME, 'ME', label, self.gpu_ids)
         self.save_network(self.netMP, 'MP', label, self.gpu_ids)
         self.save_network(self.netG, 'G', label, self.gpu_ids)

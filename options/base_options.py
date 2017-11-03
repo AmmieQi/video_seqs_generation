@@ -11,6 +11,7 @@ class BaseOptions():
     def initialize(self):
         self.parser.add_argument('--dataroot', required=True, help='path to images (should have subfolders train, val, etc)')
         self.parser.add_argument('--batchSize', type=int, default=20, help='input batch size')
+	self.parser.add_argument('--frameRate', type=int, default=0, help='scale images to this size')
         self.parser.add_argument('--loadSize', type=int, default=128, help='scale images to this size')
         self.parser.add_argument('--fineSize', type=int, default=128, help='then crop to this size')
         self.parser.add_argument('--input_nc', type=int, default=1, help='# of input image channels')
@@ -44,6 +45,7 @@ class BaseOptions():
         self.parser.add_argument('--max_dataset_size', type=int, default=float("inf"), help='Maximum number of samples allowed per dataset. If the dataset directory contains more than max_dataset_size, only a subset is loaded.')
         self.parser.add_argument('--resize_or_crop', type=str, default='scale', help='scaling and cropping of images at load time [resize_and_crop|crop|scale_width|scale_width_and_crop]')
         self.parser.add_argument('--no_flip', action='store_true', help='if specified, do not flip the images for data augmentation')
+        self.parser.add_argument('--flip', type=int, default=0, help='0 do not flip the images for data augmentation,1 randomly')
 	self.parser.add_argument('--use_cycle', action='store_true', help='if specified, use_cycle model to train')
 	self.parser.add_argument('--init_type', type=str, default='xavier', help='network initialization [normal|xavier|kaiming|orthogonal]')
         self.initialized = True
