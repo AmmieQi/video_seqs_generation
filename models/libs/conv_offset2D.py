@@ -197,8 +197,16 @@ def th_batch_map_coordinates(input, coords, order=1):
     vals_rb = _get_vals_by_coords(input, coords_rb.detach())
     vals_lb = _get_vals_by_coords(input, coords_lb.detach())
     vals_rt = _get_vals_by_coords(input, coords_rt.detach())
-
-    coords_offset_lt = coords - coords_lt.type(coords.data.type())
+    '''
+    coords_offset_rb = 1 - coords_offset_lt # a, 1-b
+    coords_offset_lt = torch.sqrt(coords_offset_lt + 1e-20) # 1 
+    coords_offset_rb = torch.sqrt(coords_offset_rb + 1e-20)
+    #print coords_offset_lt
+    vals_t = coords_offset_lt[..., 0] * vals_rt + coords_offset_rb[..., 0] * vals_lt
+    vals_b = coords_offset_lt[..., 0] * vals_rb + coords_offset_rb[..., 0] * vals_lb
+    mapped_vals = coords_offset_lt[..., 1] * vals_b + coords_offset_rb[..., 1] * vals_t
+    '''
+    coords_offset_lt = coords - coords_lt.type(coords.data.type()) 
     vals_t = coords_offset_lt[..., 0] * (vals_rt - vals_lt) + vals_lt
     vals_b = coords_offset_lt[..., 0] * (vals_rb - vals_lb) + vals_lb
     mapped_vals = coords_offset_lt[..., 1] * (vals_b - vals_t) + vals_t

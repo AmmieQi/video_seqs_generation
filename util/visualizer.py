@@ -1,4 +1,4 @@
-import numpy as np
+﻿import numpy as np
 import os
 import ntpath
 import time
@@ -130,6 +130,29 @@ class Visualizer():
         for label, image_numpy in visuals.items():
             image_name = '%s_%s.png' % (name, label)
             save_path = os.path.join(image_dir, image_name)
+            util.save_image(image_numpy, save_path)
+
+            ims.append(image_name)
+            txts.append(label)
+            links.append(image_name)
+        webpage.add_images(ims, txts, links, width=self.win_size)
+
+    def save_seqs(self, webpage, visuals, image_path):
+        image_dir = webpage.get_image_dir()
+        short_path = ntpath.basename(image_path[0])
+        name = os.path.splitext(short_path)[0]
+
+        webpage.add_header(name)
+        ims = []
+        txts = []
+        links = []
+        image_dir = os.path.join(image_dir,name)
+        if not os.path.exists(image_dir):
+            os.makedirs(image_dir)
+        for label, image_numpy in visuals.items():
+            image_name = '%s.png' % label
+            save_path = os.path.join(image_dir, image_name)
+        
             util.save_image(image_numpy, save_path)
 
             ims.append(image_name)

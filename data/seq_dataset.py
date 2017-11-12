@@ -40,10 +40,14 @@ class SeqDataset(BaseDataset):
         num_imgs = len(video)
         index_begin = self.indexs[index][1] #random.randint(0, num_imgs - self.len)
         index_stop = index_begin + self.len - 1
+        tokens = video[index_begin].split('/')
+        basic_path = tokens[-2]
+  	begin_path = tokens[-1][:-4]
+        path = basic_path+'_'+begin_path
         X = []
         Y = []
-        X_paths = []
-        Y_paths = []
+	X_paths = []
+	Y_paths = []
 	input_nc = self.opt.input_nc
         for i in range(0, self.seq_len):
             index_img = index_begin + i
@@ -71,7 +75,7 @@ class SeqDataset(BaseDataset):
             Y.append(img)
             Y_paths.append(path_img)
 
-        return X, Y  #{'X': X, 'Y': Y,
+        return X, Y,path  #{'X': X, 'Y': Y,
                  #'X_paths': X_paths, 'Y_paths': Y_paths}
 
     def __len__(self):

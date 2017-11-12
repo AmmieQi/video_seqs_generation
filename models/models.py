@@ -1,4 +1,4 @@
-
+﻿
 def create_model(opt):
     model = None
     print(opt.model)
@@ -6,12 +6,13 @@ def create_model(opt):
         #assert(opt.train_mode == 'seperate')
         from .seperate_model import SeperateModel
         model = SeperateModel()
-    elif opt.model == 'cycle':
-        #assert(opt.train_mode == 'joint')
+    elif opt.model == 'pred':
         from .cycle_model import CycleModel
         model = CycleModel()
+    elif opt.model == 'multi':
+        from .multi_model import MultiModel
+        model = MultiModel()
     elif opt.model == 'test':
-        #assert(opt.test_mode == 'single')
         from .test_model import TestModel
         model = TestModel()
     else:

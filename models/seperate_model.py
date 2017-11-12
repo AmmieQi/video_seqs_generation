@@ -27,7 +27,7 @@ class SeperateModel(BaseModel):
         high_shape = (opt.fineSize/4, opt.fineSize/4)
         #self.input_seq = self.Tensor(nb, seq_len, opt.input_nc, size, size)
         self.use_cycle = opt.use_cycle
-        
+        self.input_nc = opt.input_nc
         # Content_Encoder, Motion_Encoder, Motion_Predictor, Overall_Generator, Overall_D
         # opt.input_nc = 3
         # opt.output_nc = 3
@@ -36,18 +36,19 @@ class SeperateModel(BaseModel):
         #self.netCE = networks.content_E(self.input_nc, opt.latent_nc,
         #                                          opt.ngf, opt.which_model_E, opt.norm, not opt.no_dropout, self.gpu_ids)
         # output_nc opt.ngf*8 256
-        assert(opt.which_model_E=='unet_128')
-        assert(opt.which_model_netG=='unet_128')
-        self.netCE = networks.content_E(opt.input_nc*seq_len, 64,
+        #assert(opt.which_model_E=='unet_128')
+        #assert(opt.which_model_netG=='unet_128')
+        self.content_nc = 32
+        self.netCE = networks.content_E(opt.input_nc, opt.output_nc, self.content_nc, opt.latent_nc,
                                                   opt.ngf, opt.which_model_E, opt.norm, not opt.no_dropout, self.gpu_ids, opt.init_type)
-        self.netOPL = networks.offsets_P(low_shape, seq_len, 64, 64, opt.ngf, opt.norm, not opt.no_dropout, self.gpu_ids, opt.init_type)
-        self.netOPH = networks.offsets_P(high_shape, seq_len, opt.ngf*2, opt.ngf*2, opt.ngf, opt.norm, not opt.no_dropout, self.gpu_ids, opt.init_type)
+        self.netOPL = networks.offsets_P(low_shape, seq_len, opt.ngf*8, opt.ngf*8, opt.ngf, opt.norm, not opt.no_dropout, self.gpu_ids, opt.init_type,relu='leakyrelu')
+        self.netOPH = networks.offsets_P(high_shape, seq_len, opt.ngf*2, opt.ngf*2, opt.ngf, opt.norm, not opt.no_dropout, self.gpu_ids, opt.init_type,relu='leakyrelu')
 
         self.netME = networks.motion_E(opt.input_nc, opt.latent_nc,
-                                                opt.ngf/2, 'resnet_3blocks', opt.norm, not opt.no_dropout, self.gpu_ids, opt.init_type)
+                                                opt.ngf, 'resnet_6blocks', opt.norm, not opt.no_dropout, self.gpu_ids, opt.init_type)
         self.netMP = networks.motion_P(low_shape, seq_len, opt.latent_nc,
                                             opt.latent_nc, opt.ngf, opt.norm, not opt.no_dropout, self.gpu_ids, opt.init_type)
-        self.netG = networks.define_G(low_shape, seq_len, 64,opt.latent_nc,
+        self.netG = networks.define_G(low_shape, seq_len, 32,opt.latent_nc,
                                             opt.output_nc, opt.ngf,opt.which_model_netG, opt.norm, not opt.no_dropout, self.gpu_ids,opt.init_type)
         if self.isTrain:
             use_sigmoid = opt.no_lsgan
@@ -71,15 +72,20 @@ class SeperateModel(BaseModel):
             self.fake_pool = ImagePool(opt.pool_size)
             # define loss functions
             self.criterionGAN = networks.GANLoss(use_lsgan=not opt.no_lsgan, tensor=self.Tensor)
-            self.criterionPixel = torch.nn.L1Loss()#torch.nn.SmoothL1Loss()#
+            self.criterionPixel = torch.nn.MSELoss()
             self.criterionPre   = torch.nn.L1Loss()
             self.criterionFeat = torch.nn.MSELoss()
             self.criteriondiff = torch.nn.L1Loss()
             self.criterionSim = torch.nn.MSELoss()
+            self.criterionFlow = torch.nn.MSELoss()
+            #self.criterionTrip = torch.nn.TripletMarginLoss(margin=1, p=2)
+            self.criterionTrip = networks.TripLoss(p=2)
+            self.criterionCoh = networks.GDLLoss(2, tensor=self.Tensor)
+            self.criterionGDL = networks.GDLLoss(opt.input_nc, tensor=self.Tensor)
             # initialize optimizers
             self.optimizer_CE = torch.optim.Adam(self.netCE.parameters(), lr = opt.lr, betas = (opt.beta1, 0.999))
-            self.optimizer_OPH = torch.optim.Adam(self.netOPH.parameters(), lr = opt.lr, betas = (opt.beta1, 0.999))
-            self.optimizer_OPL = torch.optim.Adam(self.netOPL.parameters(), lr = opt.lr, betas = (opt.beta1, 0.999))
+            self.optimizer_OPH = torch.optim.Adam(self.netOPH.parameters(), lr = opt.lr/10, betas = (opt.beta1, 0.999))
+            self.optimizer_OPL = torch.optim.Adam(self.netOPL.parameters(), lr = opt.lr/10, betas = (opt.beta1, 0.999))
             self.optimizer_ME = torch.optim.Adam(self.netME.parameters(), lr = opt.lr, betas = (opt.beta1, 0.999))
             self.optimizer_MP = torch.optim.Adam(self.netMP.parameters(), lr = opt.lr, betas = (opt.beta1, 0.999))
             self.optimizer_G = torch.optim.Adam(self.netG.parameters(), lr = opt.lr, betas = (opt.beta1, 0.999))
@@ -120,6 +126,7 @@ class SeperateModel(BaseModel):
         # Y: batchsize, seq_len_y, inchains, size(0), size(1)
         input_X = input[0]
         input_Y = input[1]
+        self.image_paths   = input[2]
         #self.input_X.resize_(input_X.size()).copy_(input_X)
         #self.input_Y.resize_(input_Y.size()).copy_(input_Y)
         if len(self.gpu_ids) > 0:
@@ -133,23 +140,22 @@ class SeperateModel(BaseModel):
     def forward_G(self):
         self.real_X = [Variable(x) for x in self.input_X]
         self.real_Y = [Variable(y) for y in self.input_Y]
+        self.seq_len = len(self.real_X)
+        self.pre_len = len(self.real_Y)
 
     def forward_P(self):
         self.real_X = [Variable(x) for x in self.input_X]
         self.real_Y = [Variable(y) for y in self.input_Y]
 
     def test(self):
-        self.real_A = Variable(self.input_A, volatile=True)
-        self.fake_B = self.netG_A.forward(self.real_A)
-        self.rec_A = self.netG_B.forward(self.fake_B)
-
-        self.real_B = Variable(self.input_B, volatile=True)
-        self.fake_A = self.netG_B.forward(self.real_B)
-        self.rec_B = self.netG_A.forward(self.fake_A)
-
+      self.real_X = [Variable(x,volatile=True) for x in self.input_X]
+      self.real_Y = [Variable(y,volatile=True) for y in self.input_Y]
+      self.seq_len = len(self.real_X)
+      self.pre_len = len(self.real_Y)
+      self.forward()
     # get image paths
     def get_image_paths(self):
-        return 0#self.image_paths
+        return self.image_paths
 
     def backward_D_basic(self, netD, real, fake):
         # Real
@@ -169,6 +175,7 @@ class SeperateModel(BaseModel):
     def backward_D(self):
         fake = self.fake_pool.query(self.fakes)
         self.real = Variable(torch.cat(self.input_Y, 0))
+        #self.real = Variable(self.input_Y[self.T])
         self.loss_D = self.backward_D_basic(self.netD, self.real, fake)
 
     def backward_G(self):
@@ -178,270 +185,188 @@ class SeperateModel(BaseModel):
         lambda_dif = self.opt.lambda_dif
         lambda_pre = self.opt.lambda_pre
         lambda_gan = self.opt.lambda_gan
-
+        lambda_tra = 10
+        lambda_gdl = 5
         #for p in self.netME.parameters(): # reset requires_grad
         #    p.requires_grad = True # they are set to False below in netG update
         # forward
-        self.realX = torch.cat(self.real_X,0)
-        self.X_T = torch.cat(self.real_X,1)
+        self.realX = torch.cat(self.real_X,0)  # bs*len, nc, s0, s1
+        self.X_T = torch.cat(self.real_X,1)    # bs, len*nc, s0, s1
         self.realY = torch.cat(self.real_Y,0)
         self.Y_T = torch.cat(self.real_Y,1)
         batch_size = self.real_X[0].size(0)
 
         self.T = random.randint(0,self.pre_len-1)
+        #self.latent_y = [self.netME.forward(realy) for realy in self.real_Y]#
+        #self.loss_flow_trip_y = self.criterionTrip(self.latent_y[0],Variable(self.latent_y[1].data),Variable(self.latent_y[self.pre_len-1].data))
 
+        target = min(self.T+1,self.pre_len-1)
+        #print self.latent_y[0].size()
+        #self.encs_x, dec_x = self.netCE.forward(self.real_X[self.seq_len-1],[Variable(self.latent_y[0].data)])
+        self.encs_xs = [self.netCE.forward(realx,[],[],[]) for realx in self.real_X]
+        self.encs_ys = [self.netCE.forward(realy,[],[],[]) for realy in self.real_Y]
 
-        self.encs = self.netCE.forward(self.X_T)
-        #self.encs_y = self.netCE.forward(self.Y_T)
-        #self.loss_sim = self.criterionSim(self.encs[-1],Variable(self.encs_y[-1].data))*10
-        ## self.encs[0] is the global feature
+        #self.base_encs = self.encs_x[self.seq_len-1]
+
+        self.loss_sim = self.criterionSim(self.encs_xs[self.seq_len-1][0][-1],Variable(self.encs_ys[target][0][-1].data))
+
+        ####################################################### flow prediction ####################################################################
         hidden_state_OPL = self.netOPL.init_hidden(batch_size)
-        hidden_state_OPH = self.netOPH.init_hidden(batch_size)
+        #hidden_state_OPH = self.netOPH.init_hidden(batch_size)
         # global_feature_maps
         #initialization of the Offsets Predictor
-        FL = self.encs[-1].unsqueeze(1) #[bs,1,nc,s0,s1] low level feature
-        HL = self.encs[1].unsqueeze(1) # high level feature
-        init_offsets_l = Variable(torch.zeros(batch_size,1,FL.size(2)*2,FL.size(3),FL.size(3))).cuda()
-        init_offsets_h = Variable(torch.zeros(batch_size,1,HL.size(2)*2,HL.size(3),HL.size(3))).cuda()
-        hidden_state_OPL, pred_offsets_l = self.netOPL.forward(torch.cat([FL,init_offsets_l],2),hidden_state_OPL)
-        self.offsets_l = [pred_offsets_l]
-        hidden_state_OPH, pred_offsets_h = self.netOPH.forward(torch.cat([HL,init_offsets_h],2),hidden_state_OPH)
-        self.offsets_h = [pred_offsets_h]
+        #self.enc_x0, dec_x0 = self.netCE.forward(self.real_X[0],[Variable(self.latent_y[0].data)])
+        ln = 3
+        hn = 1
+        FL = self.encs_xs[0][0][ln] #[bs,,nc,s0,s1] high level feature
+        HL = self.encs_xs[0][0][hn] # low level feature
+        #FLs = Variable(FL.data) #[bs,,nc,s0,s1] low level feature
+        #HLs = Variable(HL.data) # high level feature
+        init_offsets_l = self.netOPL.init_offset(batch_size)#Variable(torch.zeros(batch_size,1,FL.size(1)*2,FL.size(2),FL.size(3))).cuda()
+        #init_offsets_h = self.netOPH.init_offset(batch_size)# Variable(torch.zeros(batch_size,1,HL.size(1)*2,HL.size(2),HL.size(3))).cuda()
+        #------------------------------------------- encode --------------------------------------------
+        hidden_state_OPL, pred_offsets_l, SFL = self.netOPL.forward(FL,init_offsets_l,hidden_state_OPL)
+        #hidden_state_OPH, pred_offsets_h, SHL = self.netOPH.forward(HL,init_offsets_h,hidden_state_OPH)
+        #self.loss_flow_l = self.criterionFlow(SFL, Variable(self.encs_xs[1][0][ln].data))
+        #self.loss_flow_h = self.criterionFlow(SHL, Variable(self.encs_xs[1][0][hn].data))
+        #self.loss_flow_trip_h = self.criterionTrip(SHL,self.encs_xs[1][0][hn],HL)
+        #self.loss_flow_trip_l = self.criterionTrip(SFL,self.encs_xs[1][0][ln],FL)
+        FL = self.encs_xs[1][0][ln]
+        #HL = self.encs_xs[1][0][hn]
+        for t in range(2, self.seq_len):
+            hidden_state_OPL, pred_offsets_l, SFL = self.netOPL.forward(FL,pred_offsets_l,hidden_state_OPL)
+            #hidden_state_OPH, pred_offsets_h, SHL = self.netOPH.forward(HL,pred_offsets_h,hidden_state_OPH)
+            #self.loss_flow_l += self.criterionFlow(SFL, Variable(self.encs_xs[t][0][ln].data))
+            #self.loss_flow_h += self.criterionFlow(SHL, Variable(self.encs_xs[t][0][hn].data))
+            #self.loss_flow_trip_h += self.criterionTrip(SHL,self.encs_xs[t][0][hn],HL)
+            #self.loss_flow_trip_l += self.criterionTrip(SFL,self.encs_xs[t][0][ln],FL)
+            FL = self.encs_xs[t][0][ln]
+            #HL = self.encs_xs[t][0][hn]
 
+        #self.loss_flow_trip = self.criterionTrip(SHL,Variable(self.encs_x[hn].data),HLs) + self.criterionTrip(SFL,Variable(self.encs_x[ln].data),FLs)
+        ##------------------------------------------prediction------------------------------------------##
+        target_l = Variable(self.Tensor(pred_offsets_l.size()).zero_())
+        target_l = target_l.squeeze(1)        
+        hidden_state_OPL, pred_offsets_l, SFL = self.netOPL.forward(FL,pred_offsets_l,hidden_state_OPL)        
+        self.loss_flow_l = self.criterionFlow(SFL, Variable(self.encs_ys[0][0][ln].data))
+        self.loss_flow_coh_1 = self.criterionCoh(pred_offsets_l.squeeze(1),target_l)
+        self.loss_flow_trip_l = self.criterionTrip(SFL,self.encs_ys[0][0][ln],FL)
+        self.low_feats = [SFL]
 
-        self.motion_codes_y = torch.split(self.netME.forward(self.realY),batch_size,dim=0)  ############################### 1
-        
-        '''if self.T == 0:
-            offsets = [self.offsets_h[0].squeeze(1), self.offsets_l[0].squeeze(1)]
-            self.fakes = [self.netG.forward(self.encs,self.motion_codes_y[0].squeeze(1), offsets)]
-            #self.fakes = [self.netG.forward(self.encs,tmp.squeeze(1), self.offsets[0].squeeze(1))]
-            self.loss_gan = self.criterionGAN(self.netD.forward(self.fakes[0]), True)*lambda_gan
-            self.loss_pix = self.criterionPixel(self.fakes[0],self.real_Y[0])*lambda_pix
-        else:
-            for t in range(1,self.T+1):
-                hidden_state_OPL, pred_offsets_l = self.netOPL.forward(torch.cat([FL,pred_offsets_l],2),hidden_state_OPL)
-                self.offsets_l += [pred_offsets_l]
-                hidden_state_OPH, pred_offsets_h = self.netOPH.forward(torch.cat([HL,pred_offsets_h],2),hidden_state_OPH)
-                self.offsets_h += [pred_offsets_h]
-                
-            offsets = [self.offsets_h[self.T].squeeze(1), self.offsets_l[self.T].squeeze(1)]
-            self.fakes = [self.netG.forward(self.encs,self.motion_codes_y[self.T].squeeze(1),offsets)]
-            # self.fakes += [self.netG.forward(self.encs,tmp.squeeze(1),self.offsets[t].squeeze(1))]
-            self.loss_gan = self.criterionGAN(self.netD.forward(self.fakes[0]), True)*lambda_gan
-            self.loss_pix = self.criterionPixel(self.fakes[0],self.real_Y[self.T])*lambda_pix
-            # caculate motion_feats
-        '''
-        
-        offsets = [self.offsets_h[0].squeeze(1), self.offsets_l[0].squeeze(1)]
-        self.fakes = [self.netG.forward(self.encs,self.motion_codes_y[0].squeeze(1), offsets)]
-        #self.fakes = [self.netG.forward(self.encs,tmp.squeeze(1), self.offsets[0].squeeze(1))]
-        self.loss_gan = self.criterionGAN(self.netD.forward(self.fakes[0]), True)*lambda_gan
-        self.loss_pix = self.criterionPixel(self.fakes[0],self.real_Y[0])*lambda_pix
-        
+        #target_h = Variable(self.Tensor(pred_offsets_h.size()).zero_())
+        #target_h = target_h.squeeze(1)
+        #hidden_state_OPH, pred_offsets_h, SHL = self.netOPH.forward(HL,pred_offsets_h,hidden_state_OPH)
+        #self.loss_flow_coh_h = self.criterionCoh(pred_offsets_h.squeeze(1),target_h)
+        #self.loss_flow_h = self.criterionFlow(SHL, Variable(self.encs_ys[0][0][hn].data))
+        #self.loss_flow_trip_h = self.criterionTrip(SHL,self.encs_ys[0][0][hn],HL)        
+        #self.high_feats =[SHL]
+
+        self.offsets_lx = [pred_offsets_l.data[:,:,0,...]]
+        self.offsets_ly = [pred_offsets_l.data[:,:,1,...]]
         for t in range(1,self.pre_len):
-            hidden_state_OPL, pred_offsets_l = self.netOPL.forward(torch.cat([FL,pred_offsets_l],2),hidden_state_OPL)
-            self.offsets_l += [pred_offsets_l]
-            hidden_state_OPH, pred_offsets_h = self.netOPH.forward(torch.cat([HL,pred_offsets_h],2),hidden_state_OPH)
-            self.offsets_h += [pred_offsets_h]
-                
-            offsets = [self.offsets_h[-1].squeeze(1), self.offsets_l[-1].squeeze(1)]
-            self.fakes += [self.netG.forward(self.encs,self.motion_codes_y[t].squeeze(1),offsets)]
+            hidden_state_OPL, pred_offsets_l, SFL = self.netOPL.forward(SFL,pred_offsets_l,hidden_state_OPL)
+            self.loss_flow_l += self.criterionFlow(SFL, Variable(self.encs_ys[t][0][ln].data))
+            self.loss_flow_coh_1 += self.criterionCoh(pred_offsets_l.squeeze(1),target_l)
+            self.loss_flow_trip_l += self.criterionTrip(SFL,self.encs_ys[t][0][ln],FL)
+            self.low_feats += [SFL]
+
+            #hidden_state_OPH, pred_offsets_h, SHL = self.netOPH.forward(SHL,pred_offsets_h,hidden_state_OPH)            
+            #self.loss_flow_coh_h += self.criterionCoh(pred_offsets_h.squeeze(1),target_h)            
+            #self.loss_flow_h += self.criterionFlow(SHL, Variable(self.encs_ys[t][0][hn].data))
+            #self.loss_flow_trip_h += self.criterionTrip(SHL,self.encs_ys[t][0][hn],HL)
+            #self.high_feats +=[SHL]
+            
+            self.offsets_lx += [pred_offsets_l.data[:,:,0,...]]
+            self.offsets_ly += [pred_offsets_l.data[:,:,1,...]]
+            
+
+
+        self.loss_flow_l = self.loss_flow_l*1
+        self.loss_flow_trip_l = self.loss_flow_trip_l
+        self.loss_flow_coh_1  = self.loss_flow_coh_1*0.01
+
+        #self.loss_flow_h = self.loss_flow_h*lambda_tra
+        #self.loss_flow_trip_h = self.loss_flow_trip_h       
+        #self.loss_flow_coh_h  = self.loss_flow_coh_h*0.01
+        ####################################################### pixel prediction ####################################################################
+        '''latent = [self.high_feats[self.T],self.low_feats[self.T], self.latent_y[self.T]] # 2 flow
+        #latent = [self.encs_xs[self.seq_len-1][0][1],self.low_feats[self.T], self.latent_y[self.T]] # 1 flow
+        enc_xt, fake = self.netCE.forward(self.real_X[self.seq_len-1],latent)
+        self.fakes = [fake]
+        self.loss_pix = self.criterionPixel(self.fakes[0], self.real_Y[self.T])
+        self.loss_gdl = self.criterionGDL(self.fakes[0], self.real_Y[self.T])'''
+
+        #latent = [self.high_feats[0],self.low_feats[0], self.latent_y[0]] flow 1,2
+        latent = [self.low_feats[0]] #no flow
+        layer_idx = [ln]
         
-            self.loss_gan += self.criterionGAN(self.netD.forward(self.fakes[t]), True)*lambda_gan
-            self.loss_pix += self.criterionPixel(self.fakes[t],self.real_Y[t])*lambda_pix
-        
+        enc_xt, fake = self.netCE.forward(self.real_X[self.seq_len-1],latent,layer_idx,[])
+        self.fakes = [fake]
+        #self.loss_gan = self.criterionGAN(self.netD.forward(self.fakes[0]), True)*lambda_gan
+        self.loss_pix = self.criterionPixel(self.fakes[0], self.real_Y[0])
+        self.loss_gdl = self.criterionGDL(self.fakes[0], self.real_Y[0])
 
+        for t in range(1,self.pre_len):
+            latent = [self.low_feats[t]]
+            #latent = [self.latent_y[t]] #no flow
+            enc_xt, fake = self.netCE.forward(self.real_X[self.seq_len-1],latent,layer_idx,[])
+            self.fakes += [fake]
+            #self.loss_gan += self.criterionGAN(self.netD.forward(self.fakes[t]), True)*lambda_gan
+            self.loss_pix += self.criterionPixel(self.fakes[t],self.real_Y[t])
+            self.loss_gdl += self.criterionGDL(self.fakes[t], self.real_Y[t])
 
-        '''self.motion_codes = torch.split(self.netME.forward(self.realX), batch_size,dim=0)
-        hidden_state_MP = self.netMP.init_hidden(batch_size)
-        #print hidden_state_MP[0][0].size()
-        #print self.motion_codes[-1].size()
-        hidden_state_M, pre_feat = self.netMP.forward(torch.cat(self.motion_codes,1), hidden_state_MP)
-        self.pre_feats = [pre_feat]
-        self.loss_pre = self.criterionPre(pre_feat,Variable(self.motion_codes_y[0].data))*lambda_pre
-
-        self.fakes = [self.netG.forward(self.encs,pre_feat.squeeze(1))]
-        self.loss_gan = self.criterionGAN(self.netD.forward(self.fakes[0]), True)*lambda_gan
-        self.loss_pix = self.criterionPixel(self.fakes[0],self.real_Y[0])*lambda_pix
-        for t in range (1, self.pre_len):
-            hidden_state_M, pre_feat = self.netMP.forward(self.pre_feats[-1],hidden_state_M)
-            self.pre_feats += [pre_feat]
-            self.loss_pre += self.criterionPre(pre_feat,Variable(self.motion_codes_y[t].data))*lambda_pre
-            self.fakes += [self.netG.forward(self.encs,pre_feat.squeeze(1))]
-            self.loss_gan += self.criterionGAN(self.netD.forward(self.fakes[t]), True)*lambda_gan
-            self.loss_pix += self.criterionPixel(self.fakes[t],self.real_Y[t])*lambda_pix
-        '''
-        #fakes = torch.cat(self.fakes,0)
-        #for p in self.netME.parameters(): # reset requires_grad
-        #    p.requires_grad = False # they are set to False below in netG update
-
-        '''p0 = random.randint(0,self.pre_len-1)
-        src_diff = self.fakes[0] - self.fakes[p0]
-        tar_diff = self.real_Y[0] - self.real_Y[p0]
-        self.loss_dif = self.criteriondiff(src_diff,tar_diff)*lambda_dif/self.pre_len
-        #self.loss_dif = self.criteriondiff(src_diff,tar_diff)*lambda_dif/self.pre_len
-        for t in xrange(1,self.pre_len):
-            pt = random.randint(0,self.pre_len-1)
-            src_diff = self.fakes[t] - self.fakes[pt]
-            tar_diff = self.real_Y[t] - self.real_Y[pt]
-            self.loss_dif += self.criteriondiff(src_diff,tar_diff)*lambda_dif/self.pre_len
-        '''
-        #self.fake_feats = self.netME.forward(fakes)
-        #self.real_feats = Variable(torch.cat(self.motion_codes_y,0).data)
-        #all_pre_feats = torch.cat(self.pre_feats,0)
-
-        #self.loss_gan = self.criterionGAN(self.netD.forward(fakes), True)*lambda_gan
-        #self.loss_pix = self.criterionPixel(fakes, self.realY)*lambda_pix
-        #self.loss_fea = self.criterionFeat(self.fake_feats,self.real_feats)*lambda_fea
-        #self.loss_pre = self.criterionPre(all_pre_feats, self.real_feats)*lambda_pre
-
-        #self.loss_dif.backward()
-        self.loss_G = self.loss_pix + self.loss_gan #+ self.loss_dif #+ self.loss_sim #+ self.loss_fea #+ self.loss_pre
+        ####################################################### loss backward ####################################################################
+        self.loss_pix = self.loss_pix*lambda_pix
+        self.loss_gdl = self.loss_gdl*lambda_gdl
+        self.loss_G =self.loss_pix + self.loss_flow_coh_1 + self.loss_flow_l + self.loss_flow_trip_l#+self.loss_flow_coh_h#+self.loss_flow_trip_h + self.loss_flow_trip_l#+ self.loss_flow_trip_y#+self.loss_sim #+ self.loss_gan + self.loss_pix + self.loss_gdl
         self.loss_G.backward()
 
-    def backward_cycle(self):
-        #lambda_idt = self.opt.identity
-        lambda_fea = self.opt.lambda_fea
-        lambda_pix = self.opt.lambda_pix
-        lambda_dif = self.opt.lambda_dif
-        lambda_pre = self.opt.lambda_pre
-        lambda_gan = self.opt.lambda_gan
-
-        #for p in self.netME.parameters(): # reset requires_grad
-        #    p.requires_grad = True # they are set to False below in netG update
-        # forward
-
-        flag = random.randint(0,1)
-        if flag == 1:
-            tmp = list(reversed(self.real_Y))
-            self.real_Y = list(reversed(self.real_X))
-            self.real_X = tmp
-
-        realX = torch.cat(self.real_X,0)
-        realX_T = torch.cat(self.real_X,1)
-        realY = torch.cat(self.real_Y,0)
-        #realY_T = torch.cat(self.real_Y,1)
-
-        self.real_X_INV = list(reversed(self.real_X))
-        self.real_Y_INV = list(reversed(self.real_Y))
-
-        realX_INV = torch.cat(self.real_X_INV,0)
-        realX_T_INV = torch.cat(self.real_X_INV,1)
-        #realY_INV = torch.cat(self.real_Y_INV,0)
-        #realY_T_INV = torch.cat(self.real_Y_INV,1)
-
+    def forward(self):       
         batch_size = self.real_X[0].size(0)
 
-        ############################################################################################################################################
-        ########### X --> Y'
-        encs_X = self.netCE.forward(realX_T)
-        motion_y = torch.split(self.netME.forward(realY),batch_size,dim=0)  ############################### 1
-        self.fakes_y = []
-        for t in xrange(self.pre_len):
-            self.fakes_y += [self.netG.forward(encs_X,motion_y[t].squeeze(1))]
-        # caculate motion_feats
-        motion_x = torch.split(self.netME.forward(realX), batch_size,dim=0)
-        hidden_state_MP_y = self.netMP.init_hidden(batch_size)
-        hidden_state_M_y, pre_feat_y = self.netMP.forward(torch.cat(motion_x,1), hidden_state_MP_y)
-        self.pre_feats_y = [pre_feat_y]
-        #self.loss_pre = self.criterionPre(pre_feat,Variable(motion_codes_y[0].data))*lambda_pre
-        #self.fakes_y = [self.netG.forward(encs_X,pre_feat_y.squeeze(1))]
-        for t in range (1, self.pre_len):
-            hidden_state_M_y, pre_feat_y = self.netMP.forward(self.pre_feats_y[-1],hidden_state_M_y)
-            self.pre_feats_y += [pre_feat_y]
-            #self.loss_pre += self.criterionPre(pre_feat,Variable(self.motion_codes_y[t].data))*lambda_pre
-            #self.fakes_y += [self.netG.forward(encs_X,pre_feat_y.squeeze(1))]
+        ####################################################### flow prediction ####################################################################
+        self.encs_xs = [self.netCE.forward(realx,[],[]) for realx in self.real_X]
+        self.encs_ys = [self.netCE.forward(realy,[],[]) for realy in self.real_Y]
+        hidden_state_OPL = self.netOPL.init_hidden(batch_size)
+        hidden_state_OPH = self.netOPH.init_hidden(batch_size)       
+        ln = 4
+        hn = 3
+        FL = self.encs_xs[0][0][ln] #[bs,,nc,s0,s1] high level feature
+        HL = self.encs_xs[0][0][hn] # low level feature
+        
+        init_offsets_l = self.netOPL.init_offset(batch_size)#
+        init_offsets_h = self.netOPH.init_offset(batch_size)# 
+        #------------------------------------------- encode --------------------------------------------
+        hidden_state_OPL, pred_offsets_l, SFL = self.netOPL.forward(FL,init_offsets_l,hidden_state_OPL)
+        hidden_state_OPH, pred_offsets_h, SHL = self.netOPH.forward(HL,init_offsets_h,hidden_state_OPH)        
+        FL = self.encs_xs[1][0][ln]
+        HL = self.encs_xs[1][0][hn]
+        for t in range(2, self.seq_len):
+            hidden_state_OPL, pred_offsets_l, SFL = self.netOPL.forward(FL,pred_offsets_l,hidden_state_OPL)
+            hidden_state_OPH, pred_offsets_h, SHL = self.netOPH.forward(HL,pred_offsets_h,hidden_state_OPH)            
+            FL = self.encs_xs[t][0][ln]
+            HL = self.encs_xs[t][0][hn]       
+        ##------------------------------------------prediction------------------------------------------##
+        hidden_state_OPL, pred_offsets_l, SFL = self.netOPL.forward(FL,pred_offsets_l,hidden_state_OPL)
+        hidden_state_OPH, pred_offsets_h, SHL = self.netOPH.forward(HL,pred_offsets_h,hidden_state_OPH)              
+        self.low_feats = [SFL]
+        self.high_feats =[SHL]
 
-        fakes_y = torch.cat(self.fakes_y,0)
-        #for p in self.netME.parameters(): # reset requires_grad
-        #    p.requires_grad = False # they are set to False below in netG update
+        for t in range(1,self.pre_len):
+            hidden_state_OPL, pred_offsets_l, SFL = self.netOPL.forward(SFL,pred_offsets_l,hidden_state_OPL)
+            hidden_state_OPH, pred_offsets_h, SHL = self.netOPH.forward(SHL,pred_offsets_h,hidden_state_OPH)            
+            self.low_feats += [SFL]
+            self.high_feats +=[SHL]       
+        ####################################################### pixel prediction ####################################################################       
+        latent = [self.high_feats[0], self.low_feats[0]] #no flow
+        layer_idx = [3,4]       
+        enc_xt, fake = self.netCE.forward(self.real_X[self.seq_len-1],latent,layer_idx)
+        self.fakes = [fake]        
+        for t in range(1,self.pre_len):           
+            latent = [self.high_feats[t] ,self.low_feats[t]]           
+            enc_xt, fake = self.netCE.forward(self.real_X[self.seq_len-1],latent,layer_idx)
+            self.fakes += [fake]                   
 
-        p0 = random.randint(0,self.pre_len-1)
-        self.loss_dif = self.criteriondiff((self.fakes_y[0] - self.fakes_y[p0]),(self.real_Y[0]-self.real_Y[p0]))*lambda_dif/self.pre_len
-        for t in xrange(1,self.pre_len):
-            pt = random.randint(0,self.pre_len-1)
-            self.loss_dif += self.criteriondiff((self.fakes_y[t] - self.fakes_y[pt]),(self.real_Y[t]-self.real_Y[pt]))*lambda_dif/self.pre_len
-
-        #self.fake_feats = self.netME.forward(fakes)
-        #self.real_feats = Variable(torch.cat(self.motion_codes_y,0).data)
-        #all_pre_feats = torch.cat(self.pre_feats,0)
-        self.loss_gan = self.criterionGAN(self.netD.forward(fakes_y), True)*lambda_gan
-        self.loss_pix = self.criterionPixel(fakes_y, realY)*lambda_pix
-        #self.loss_fea = self.criterionFeat(self.fake_feats,self.real_feats)*lambda_fea
-        #self.loss_pre = self.criterionPre(all_pre_feats, self.real_feats)*lambda_pre
-
-        #self.loss_pre.backward()
-        ########################################################################
-        ##### Fakes
-        self.fakes_y.reverse()
-        fake_Y_T = torch.cat(self.fakes_y,1)
-        fakeY = torch.cat(self.fakes_y,0)
-        ############################################################################################################################################
-        ########### Y' --> X''
-        encs_fake_Y = self.netCE.forward(fake_Y_T)
-        motion_fake_y = torch.split(self.netME.forward(fakeY),batch_size,dim=0)
-
-        motion_x_inv = torch.split(self.netME.forward(realX_INV),batch_size,dim=0)
-        self.fakes_x = []
-        for t in xrange(self.pre_len):
-            self.fakes_x += [self.netG.forward(encs_fake_Y,motion_x_inv[t].squeeze(1))]
-
-        hidden_state_MP_x = self.netMP.init_hidden(batch_size)
-        hidden_state_M_x, pre_feat_x = self.netMP.forward(torch.cat(motion_fake_y,1), hidden_state_MP_x)
-        self.pre_feats_x = [pre_feat_x]
-        #self.loss_pre = self.criterionPre(pre_feat,Variable(motion_codes_y[0].data))*lambda_pre
-        #self.fakes_x = [self.netG.forward(encs_fake_Y,pre_feat_x.squeeze(1))]
-        for t in range (1, self.pre_len):
-            hidden_state_M_x, pre_feat_x = self.netMP.forward(self.pre_feats_x[-1],hidden_state_M_x)
-            self.pre_feats_x += [pre_feat_x]
-            #self.loss_pre += self.criterionPre(pre_feat,Variable(self.motion_codes_y[t].data))*lambda_pre
-            #self.fakes_x += [self.netG.forward(encs_fake_Y,pre_feat_x.squeeze(1))]
-
-        fakes_x = torch.cat(self.fakes_x,0)
-        #for p in self.netME.parameters(): # reset requires_grad
-        #    p.requires_grad = False # they are set to False below in netG update
-
-        p0 = random.randint(0,self.pre_len-1)
-        self.loss_dif_x = self.criteriondiff((self.fakes_x[0] - self.fakes_x[p0]),(self.real_X_INV[0]-self.real_X_INV[p0]))*lambda_dif/self.pre_len
-        for t in xrange(1,self.pre_len):
-            pt = random.randint(0,self.pre_len-1)
-            self.loss_dif_x += self.criteriondiff((self.fakes_x[t] - self.fakes_x[pt]),(self.real_X_INV[t]-self.real_X_INV[pt]))*lambda_dif/self.pre_len
-
-        #self.fake_feats = self.netME.forward(fakes)
-        #self.real_feats = Variable(torch.cat(self.motion_codes_y,0).data)
-        #all_pre_feats = torch.cat(self.pre_feats,0)
-        self.loss_gan_x = self.criterionGAN(self.netD.forward(fakes_x), True)*lambda_gan
-        self.loss_pix_x = self.criterionPixel(fakes_x, realX_INV)*lambda_pix
-
-        ##############################################################################3
-        ######## Overall loss
-        self.fakes = list(reversed(self.fakes_y)) #+ self.fakes_x
-        self.fakes_x.reverse()
-        #self.loss_G = self.loss_gan + self.loss_gan_x + self.loss_dif + self.loss_dif_x #+ self.loss_pre
-        self.loss_G = self.loss_pix + self.loss_gan + self.loss_pix_x + self.loss_gan_x + self.loss_dif + self.loss_dif_x #+ self.loss_pre
-        self.loss_G.backward()
-        #print 'generation loss: ', self.loss_gan.data[0], ' pixel loss: ', self.loss_pix.data[0], ' feature loss: ', self.loss_fea.data[0], ' overall loss: ', self.loss_G.data[0]
-
-    def backward_P(self):
-        # forward
-        self.motion_codes_p = [self.netME.forward(real) for real in self.real_X] # [bs,1, oc, s0, s1]*len(self.real_X)
-        batch_size = self.motion_codes_p[0].size(0)
-        hidden_state_MP = self.netMP.init_hidden(batch_size)
-        self.mcode_p = self.netMP.forward(torch.cat(self.motion_codes_p,1), hidden_state_MP)
-        hidden_state_M = self.mcode_p[0]
-        self.pre_feats_p = [self.mcode_p[1]]
-        self.real_fea_p = [self.netME.forward(self.real_Y[0])]
-        self.loss_pre = self.criterionPre(self.pre_feats_p[-1], Variable(self.real_fea_p[-1].data))
-
-        for t in xrange(1, self.pre_len):
-            hidden_state_M, outmcode = self.netMP.forward(self.pre_feats_p[-1],hidden_state_M)
-            self.pre_feats_p += [outmcode]
-            self.real_fea_p += [self.netME.forward(self.real_Y[t])]
-            self.loss_pre += self.criterionPre(self.pre_feats_p[-1],Variable(self.real_fea_p[-1].data))
-
-        self.loss_P = self.loss_pre
-        self.loss_P.backward()
-        #print 'output shape: ', len(self.pre_feats_p), ' output size: ', self.pre_feats_p[0].size(), 'Loss_P: ', self.loss_P.data[0]
 
     def optimize_generator(self):
         # forward_G
@@ -454,7 +379,7 @@ class SeperateModel(BaseModel):
         self.optimizer_MP.zero_grad()
         # Decoder
         self.optimizer_G.zero_grad()
-        
+
 
         if self.use_cycle:
             self.backward_cycle()
@@ -468,7 +393,7 @@ class SeperateModel(BaseModel):
         self.optimizer_MP.step()
 
         self.optimizer_G.step()
-        
+
         # D
 
     def optimize_discriminator(self):
@@ -478,37 +403,24 @@ class SeperateModel(BaseModel):
         self.backward_D()
         self.optimizer_D.step()
 
-    def optimize_predictor(self):
-        # forward_P
-        self.forward_P()
-        # Encoder
-        self.optimizer_ME.zero_grad()
-        # Predictor
-        self.optimizer_MP.zero_grad()
-
-        self.backward_P()
-
-        self.optimizer_ME.step()
-        self.optimizer_MP.step()
-
     def optimize_parameters(self):
-    #    self.optimize_predictor()
         self.optimize_generator()
-        self.optimize_discriminator()
-        #self.optimizer_D.zero_grad()
-        #self.backward_D()
+        #self.optimize_discriminator()
 
     def get_current_errors(self):
-        #print self.loss_D.data[0].cpu().float()
-        #PRE = 0#self.loss_pre.data[0]
-        GAN = self.loss_gan.data[0]
-        #FEA = self.loss_fea.data[0]
+        #GAN = self.loss_gan.data[0]
         PIX = self.loss_pix.data[0]
-        #DIF = self.loss_dif.data[0]
-        DES = self.loss_D.data[0]
-        SIM = 0 #self.loss_sim.data[0]
-        return OrderedDict([('G', GAN), ('Pixel', PIX), ('D',DES),('SIM',SIM)])
-        #return OrderedDict([('Prediction', PRE), ('G', GAN), ('Feature', FEA), ('Pixel', PIX),('Diff',DIF), ('D',DES)])
+        GDL = self.loss_gdl.data[0]
+        FLOW_L = self.loss_flow_l.data[0]
+        #FLOW_H = self.loss_flow_h.data[0]
+        TRIP_L = self.loss_flow_trip_l.data[0]/10
+        #TRIP_H = self.loss_flow_trip_h.data[0]/10
+        #DES = self.loss_flow_trip_y.data[0]
+        COH_L = self.loss_flow_coh_1.data[0]*100
+        #COH_H = self.loss_flow_coh_h.data[0]*100
+        SIM = self.loss_sim.data[0]
+        return OrderedDict([('Pixel', PIX),('FLOW_L',FLOW_L),('TRIP_L',TRIP_L),('COH_L',COH_L),('GDL',GDL ),('SIM',SIM)])
+        #return OrderedDict([('Pixel', PIX), ('GDL',GDL ), ('Trans_2',FLOW_H),('Trans_4',FLOW_L),('TRIP_2',TRIP_H),('TRIP_4',TRIP_L),('SIM',SIM)])
 
     def get_current_visuals(self):
         images = []
@@ -516,24 +428,23 @@ class SeperateModel(BaseModel):
             name = 'frame_'+str(i)
             image = util.tensor2im(self.real_X[i].data)
             images += [(name,image)]
-            if self.use_cycle:
-                fake_name = 'fake_'+str(i)
-                fake_image = util.tensor2im(self.fakes_x[i].data)
-                images += [(fake_name,fake_image)]
 
-        real_name = 'frame_gt'+str(self.seq_len+self.T)
+        '''real_name = 'frame_gt'+str(self.seq_len+self.T)
         real_image = util.tensor2im(self.real_Y[self.T].data)
         fake_name = 'fake_pred'+str(self.seq_len+self.T)
-        fake_image = util.tensor2im(self.fakes[self.T].data)
+        fake_image = util.tensor2im(self.fakes[0].data)
         images += [(real_name, real_image),(fake_name,fake_image)]
-
-        '''for j in xrange(self.pre_len):
+        '''
+        for j in xrange(self.pre_len):
             real_name = 'frame_'+str(self.seq_len+j)
             real_image = util.tensor2im(self.real_Y[j].data)
             fake_name = 'fake_'+str(self.seq_len+j)
             fake_image = util.tensor2im(self.fakes[j].data)
             images += [(real_name, real_image),(fake_name,fake_image)]
-        '''
+            offset_x = util.tensor2im(self.offsets_lx[j])
+            offset_y = util.tensor2im(self.offsets_ly[j])
+            images += [('offset_x_%s'%(j+self.seq_len), offset_x)]
+            images += [('offset_y_%s'%(j+self.seq_len), offset_y)]
         return OrderedDict(images)
         #return OrderedDict([('real_Began', real_Y_0), ('Pred_Began', fake_Y_0), ('real_End', real_Y_E),
         #                    ('Pred_End', fake_Y_E)])
@@ -547,6 +458,29 @@ class SeperateModel(BaseModel):
         self.save_network(self.netG, 'G', label, self.gpu_ids)
         self.save_network(self.netD, 'D', label, self.gpu_ids)
 
+    def get_all_current_visuals(self):
+        images = []
+        for i in xrange(self.seq_len):
+            name = 'gt_%04d'%i
+            image = util.tensor2im(self.real_X[i].data)
+            images += [(name,image)]
+
+        for i in xrange(self.pre_len):
+            name = 'gt_%04d'%(i+self.seq_len)
+            image = util.tensor2im(self.real_Y[i].data)
+            images += [(name,image)]
+
+        for i in xrange(self.seq_len):
+            name = 'pred_%04d'%i
+            image = util.tensor2im(self.real_X[i].data)
+            images += [(name,image)]
+
+        for j in xrange(self.pre_len):
+            name = 'pred_%04d'%(j+self.seq_len)
+            image = util.tensor2im(self.fakes[j].data)
+            images += [(name,image)]
+
+        return OrderedDict(images)
     '''def update_learning_rate(self):
         lrd = self.opt.lr / self.opt.niter_decay
         lr = self.old_lr - lrd
