@@ -723,7 +723,7 @@ class OffsetsPredictor(nn.Module):
             self.relu = nn.Tanh()
         # ConvLSTM
         filter_size=3
-        nlayers = 1
+        nlayers = 2
         self.groups = groups
         #If using this format, then we need to transpose in CLSTM
         '''offset_nc = self.groups*2*filter_size*filter_size
@@ -755,21 +755,18 @@ class OffsetsPredictor(nn.Module):
         self.offset_nc = offset_nc
         self.shape = shape
         #print 'shape: ',shape,' ,input_nc: ', input_nc, ' ,ngf: ', ngf*mult
-        self.conv_lstm = CLSTM(shape, input_nc+offset_nc, filter_size, offset_nc, nlayers,use_bias)
-        model = [nn.Conv2d(offset_nc, offset_nc, kernel_size=1,padding = 0)]
+        self.embedding = nn.Sequential(nn.Conv2d(offset_nc,ngf, kernel_size = 1, padding=0),norm_layer(ngf),nn.LeakyReLU(0.2,True))
+        self.conv_lstm = CLSTM(shape, input_nc+ngf, filter_size, ngf, nlayers,use_bias)
+        model = [nn.Conv2d(ngf, offset_nc, kernel_size=1,padding = 0)]
         self.model = nn.Sequential(*model)
-        self.enhance = nn.Sequential(nn.Conv2d(input_nc, input_nc, kernel_size=3,stride=1,padding = 1,bias=False),norm_layer(input_nc))
-        self.norml = norm_layer(input_nc)
+        #self.enhance = nn.Sequential(nn.Conv2d(input_nc, input_nc, kernel_size=3,stride=1,padding = 1,bias=False),norm_layer(input_nc))
+        #self.norml = norm_layer(input_nc)
     def forward(self,input,pre_offset,hidden_state):
         #input = Variable(input.data)
-        convlstm_out = self.conv_lstm(torch.cat([input.unsqueeze(1),pre_offset],2), hidden_state)
-        if self.gpu_ids and isinstance(input.data, torch.cuda.FloatTensor):
-            #offset = nn.parallel.data_parallel(self.conv_1, convlstm_out[1][-1], self.gpu_ids)
-            offset = nn.parallel.data_parallel(self.model, convlstm_out[1][-1], self.gpu_ids)
-        else:
-            #offset = self.conv_1(convlstm_out[1][-1])
-            offset = self.model(convlstm_out[1][-1])
-
+        embedded = self.embedding(pre_offset)
+        convlstm_out = self.conv_lstm(torch.cat([input.unsqueeze(1),embedded.unsqueeze(1)],2), hidden_state)
+        offset = self.model(convlstm_out[1][-1])
+        #print offset.size()
         #offset = convlstm_out[1][-1]
 
         if self.input_nc == self.output_nc:
@@ -790,15 +787,13 @@ class OffsetsPredictor(nn.Module):
             output = output/self.groups
                 # shared offset with groups*2 channels, target has nc*2 channels, repeat n=(nc/groups) times (nc/groups)
                 #output = self.relu(self.conv_offset_1(input,offset))
-
-        offset = offset.unsqueeze(1)
         return convlstm_out[0], offset, output #[bs,1, oc, s0, s1]
 
     def init_hidden(self,batch_size):
         return self.conv_lstm.init_hidden(batch_size)
 
     def init_offset(self,batch_size):
-        return Variable(torch.zeros(batch_size,1,self.offset_nc,self.shape[0],self.shape[1])).cuda()
+        return Variable(torch.zeros(batch_size,self.offset_nc,self.shape[0],self.shape[1])).cuda()
 
     @staticmethod
     def _transform(self, x, offsets):
@@ -1130,7 +1125,7 @@ class UnetGenerator(nn.Module):
                 enc_4 = latent[1]
             '''
             for i in xrange(len(layer_idx)):
-                encs[layer_idx[i]] = latent[i] + encs[layer_idx[i]]
+                encs[layer_idx[i]] = latent[i]
             ####################### Decoder forward #################################
             '''if self.num_downs == 8:
                 dec_7 = self.deconv_7(torch.cat([enc_7,latent[-1]],1))
