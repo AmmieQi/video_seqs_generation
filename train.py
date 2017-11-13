@@ -89,7 +89,7 @@ for epoch in range(opt.epoch_count, opt.niter + opt.niter_decay + 1):
 
     model.update_learning_rate()
 
-    if epoch % 50 == 0:
+    if epoch % 20 == 0:
         print('#testing samples = %d' % test_dataset_size)        
         for i, data in enumerate(test_dataset):
             model.set_input(data)
