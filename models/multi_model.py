@@ -23,7 +23,7 @@ class MultiModel(BaseModel):
         seq_len = opt.seq_len
         self.seq_len = opt.seq_len
         self.pre_len = opt.pre_len
-        low_shape = (opt.fineSize/2, opt.fineSize/2)
+        low_shape = (opt.fineSize/32, opt.fineSize/32)
         high_shape = (opt.fineSize/4, opt.fineSize/4)
         #self.input_seq = self.Tensor(nb, seq_len, opt.input_nc, size, size)
         self.use_cycle = opt.use_cycle
@@ -33,14 +33,14 @@ class MultiModel(BaseModel):
         # opt.output_nc = 3
         #self.input_nc = opt.input_nc * opt.seq_len
 
-        self.content_nc = 32
+        self.content_nc = 8
         self.netCE = networks.content_E(opt.input_nc*self.seq_len, opt.output_nc, self.content_nc, opt.latent_nc,
                                                   opt.ngf, opt.which_model_E, opt.norm, not opt.no_dropout, self.gpu_ids, opt.init_type)
-        self.netOPL = networks.offsets_P(low_shape, seq_len, opt.ngf, opt.ngf, opt.ngf, opt.norm, not opt.no_dropout, self.gpu_ids, opt.init_type,relu='leakyrelu',groups = 4)
-        self.netOPH = networks.offsets_P(high_shape, seq_len, opt.ngf*2, opt.ngf*2, opt.ngf, opt.norm, not opt.no_dropout, self.gpu_ids, opt.init_type,relu='leakyrelu',groups=4)
+        self.netOPL = networks.offsets_P(low_shape, seq_len, self.content_nc, self.content_nc, opt.ngf, opt.norm, not opt.no_dropout, self.gpu_ids, opt.init_type,relu='leakyrelu',groups = 1)
+        self.netOPH = networks.offsets_P(high_shape, seq_len, opt.ngf*2, opt.ngf*2, opt.ngf, opt.norm, not opt.no_dropout, self.gpu_ids, opt.init_type,relu='leakyrelu',groups=1)
 
-        self.netME = networks.motion_E(opt.input_nc, opt.latent_nc,
-                                                opt.ngf, 'resnet_6blocks', opt.norm, not opt.no_dropout, self.gpu_ids, opt.init_type)
+        self.netME = networks.content_E(opt.input_nc*self.seq_len,self.content_nc, opt.output_nc,opt.latent_nc,
+                                                opt.ngf, 'unet_128', opt.norm, not opt.no_dropout, self.gpu_ids, opt.init_type)
         self.netMP = networks.motion_P(low_shape, seq_len, opt.latent_nc,
                                             opt.latent_nc, opt.ngf, opt.norm, not opt.no_dropout, self.gpu_ids, opt.init_type)
         self.netG = networks.define_G(low_shape, seq_len, 32,opt.latent_nc,
@@ -75,8 +75,8 @@ class MultiModel(BaseModel):
             self.criterionFlow = torch.nn.MSELoss()
             #self.criterionTrip = torch.nn.TripletMarginLoss(margin=1, p=2)
             self.criterionTrip = networks.TripLoss(p=2)
-            self.criterionCoh = networks.GDLLoss(8, tensor=self.Tensor)
-            self.criterionCoh_h = networks.GDLLoss(8, tensor=self.Tensor)
+            self.criterionCoh = networks.GDLLoss(2, tensor=self.Tensor)
+            self.criterionCoh_h = networks.GDLLoss(2, tensor=self.Tensor)
             self.criterionGDL = networks.GDLLoss(opt.input_nc, tensor=self.Tensor)
             # initialize optimizers
             self.optimizer_CE = torch.optim.Adam(self.netCE.parameters(), lr = opt.lr, betas = (opt.beta1, 0.999))
@@ -198,7 +198,7 @@ class MultiModel(BaseModel):
         hidden_state_OPL = self.netOPL.init_hidden(batch_size)
         #hidden_state_OPH = self.netOPH.init_hidden(batch_size)
 
-        ln = 0
+        ln = 4
         hn = 1
         FL = self.encs_xs[0][ln] #[bs,,nc,s0,s1] high level feature
         #HL = self.encs_xs[0][hn] # low level feature 
@@ -265,7 +265,7 @@ class MultiModel(BaseModel):
         ####################################################### loss backward ####################################################################
         self.loss_pix = self.loss_pix*lambda_pix
         self.loss_gdl = self.loss_gdl*lambda_gdl   
-        self.loss_G = self.loss_pix +self.loss_flow_coh_1 +self.loss_gdl#++ self.loss_flow_coh_h#+self.loss_flow_trip_h + self.loss_flow_trip_l#+ self.loss_flow_trip_y#+self.loss_sim #+ self.loss_gan + self.loss_pix + self.loss_gdl
+        self.loss_G = self.loss_pix +self.loss_flow_coh_1 +self.loss_gdl+ self.loss_flow_coh_h#+self.loss_flow_trip_h + self.loss_flow_trip_l#+ self.loss_flow_trip_y#+self.loss_sim #+ self.loss_gan + self.loss_pix + self.loss_gdl
         self.loss_G.backward()
 
 
