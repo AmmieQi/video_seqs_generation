@@ -723,7 +723,7 @@ class OffsetsPredictor(nn.Module):
             self.relu = nn.Tanh()
         # ConvLSTM
         filter_size=3
-        nlayers = 2
+        nlayers = 1
         self.groups = groups
         #If using this format, then we need to transpose in CLSTM
         '''offset_nc = self.groups*2*filter_size*filter_size
@@ -940,7 +940,7 @@ class UnetEncoder(nn.Module):
         self.num_downs = num_downs
         self.gpu_ids = gpu_ids
         #################################################### Encoder ##################################################################
-        self.conv_1 = nn.Sequential(nn.Conv2d(input_nc, ngf, kernel_size=4, stride=2,padding=1,bias=use_bias),nn.LeakyReLU(0.2,True)) #2 128-->64, 256-->128
+        self.conv_1 = nn.Sequential(nn.Conv2d(input_nc, ngf, kernel_size=4, stride=2,padding=1,bias=use_bias),norm_layer(ngf), nn.LeakyReLU(0.2,True)) #2 128-->64, 256-->128
         self.conv_2 = nn.Sequential(nn.Conv2d(ngf, ngf*2, kernel_size=4, stride=2,padding=1,bias=use_bias),norm_layer(ngf*2),nn.LeakyReLU(0.2,True))  #4 64-->32, 128-->64
         self.conv_3 = nn.Sequential(nn.Conv2d(ngf*2, ngf*4, kernel_size=4, stride=2,padding=1,bias=use_bias),norm_layer(ngf*4),nn.LeakyReLU(0.2,True)) #8 32-->16, 64-->32
         self.conv_4 = nn.Sequential(nn.Conv2d(ngf*4, ngf*8, kernel_size=4, stride=2,padding=1,bias=use_bias),norm_layer(ngf*8),nn.LeakyReLU(0.2,True)) #16 16-->8, 32-->16
@@ -1019,7 +1019,7 @@ class UnetGenerator(nn.Module):
         self.gpu_ids = gpu_ids
 
         #################################################### Encoder ##################################################################
-        self.conv_1 = nn.Sequential(nn.Conv2d(input_nc, ngf, kernel_size=4, stride=2,padding=1,bias=use_bias),nn.LeakyReLU(0.2,True)) #2 128-->64, 256-->128
+        self.conv_1 = nn.Sequential(nn.Conv2d(input_nc, ngf, kernel_size=4, stride=2,padding=1,bias=use_bias),norm_layer(ngf),nn.LeakyReLU(0.2,True)) #2 128-->64, 256-->128
         self.conv_2 = nn.Sequential(nn.Conv2d(ngf, ngf*2, kernel_size=4, stride=2,padding=1,bias=use_bias),norm_layer(ngf*2),nn.LeakyReLU(0.2,True))  #4 64-->32, 128-->64
         self.conv_3 = nn.Sequential(nn.Conv2d(ngf*2, ngf*4, kernel_size=4, stride=2,padding=1,bias=use_bias),norm_layer(ngf*4),nn.LeakyReLU(0.2,True)) #8 32-->16, 64-->32
         self.conv_4 = nn.Sequential(nn.Conv2d(ngf*4, ngf*8, kernel_size=4, stride=2,padding=1,bias=use_bias),norm_layer(ngf*8),nn.LeakyReLU(0.2,True)) #16 16-->8, 32-->16

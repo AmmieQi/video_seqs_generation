@@ -24,7 +24,7 @@ class SeperateModel(BaseModel):
         self.seq_len = opt.seq_len
         self.pre_len = opt.pre_len
         low_shape = (opt.fineSize/32, opt.fineSize/32)
-        high_shape = (opt.fineSize/16, opt.fineSize/16)
+        high_shape = (opt.fineSize/4, opt.fineSize/4)
         #self.input_seq = self.Tensor(nb, seq_len, opt.input_nc, size, size)
         self.use_cycle = opt.use_cycle
         self.input_nc = opt.input_nc
@@ -42,8 +42,8 @@ class SeperateModel(BaseModel):
         self.netCE = networks.content_E(opt.input_nc*self.seq_len, opt.output_nc, self.content_nc, opt.latent_nc,
                                                   opt.ngf, 'unet_128_G', opt.norm, not opt.no_dropout, self.gpu_ids, opt.init_type)
 
-        self.netOPL = networks.offsets_P(low_shape, seq_len, self.content_nc, self.content_nc, opt.ngf, opt.norm, not opt.no_dropout, self.gpu_ids, opt.init_type,relu='leakyrelu',groups = 4)
-        self.netOPH = networks.offsets_P(high_shape, seq_len, opt.ngf*8, opt.ngf*8, opt.ngf, opt.norm, not opt.no_dropout, self.gpu_ids, opt.init_type,relu='leakyrelu',groups = 4)
+        self.netOPL = networks.offsets_P(low_shape, seq_len, self.content_nc, self.content_nc, opt.ngf, opt.norm, not opt.no_dropout, self.gpu_ids, opt.init_type,relu='leakyrelu',groups = 2)
+        self.netOPH = networks.offsets_P(high_shape, seq_len, opt.ngf*2, opt.ngf*2, opt.ngf, opt.norm, not opt.no_dropout, self.gpu_ids, opt.init_type,relu='leakyrelu',groups = 2)
 
         self.netME = networks.content_E(opt.input_nc*self.seq_len,self.content_nc, opt.output_nc,opt.latent_nc,
                                                 opt.ngf, 'unet_128', opt.norm, not opt.no_dropout, self.gpu_ids, opt.init_type)
@@ -82,12 +82,12 @@ class SeperateModel(BaseModel):
             self.criterionFlow = torch.nn.MSELoss()
             #self.criterionTrip = torch.nn.TripletMarginLoss(margin=1, p=2)
             self.criterionTrip = networks.TripLoss(p=2)
-            self.criterionCoh = networks.GDLLoss(8, tensor=self.Tensor)
+            self.criterionCoh = networks.GDLLoss(4, tensor=self.Tensor)
             self.criterionGDL = networks.GDLLoss(opt.input_nc, tensor=self.Tensor)
             # initialize optimizers
             self.optimizer_CE = torch.optim.Adam(self.netCE.parameters(), lr = opt.lr, betas = (opt.beta1, 0.999))
-            self.optimizer_OPH = torch.optim.Adam(self.netOPH.parameters(), lr = opt.lr/20, betas = (opt.beta1, 0.999))
-            self.optimizer_OPL = torch.optim.Adam(self.netOPL.parameters(), lr = opt.lr/20, betas = (opt.beta1, 0.999))
+            self.optimizer_OPH = torch.optim.Adam(self.netOPH.parameters(), lr = opt.lr/10, betas = (opt.beta1, 0.999))
+            self.optimizer_OPL = torch.optim.Adam(self.netOPL.parameters(), lr = opt.lr/10, betas = (opt.beta1, 0.999))
             self.optimizer_ME = torch.optim.Adam(self.netME.parameters(), lr = opt.lr, betas = (opt.beta1, 0.999))
             self.optimizer_MP = torch.optim.Adam(self.netMP.parameters(), lr = opt.lr, betas = (opt.beta1, 0.999))
             self.optimizer_G = torch.optim.Adam(self.netG.parameters(), lr = opt.lr, betas = (opt.beta1, 0.999))
@@ -203,7 +203,7 @@ class SeperateModel(BaseModel):
         hidden_state_OPL = self.netOPL.init_hidden(batch_size)
         hidden_state_OPH = self.netOPH.init_hidden(batch_size)
         ln = 4
-        hn = 3
+        hn = 1
         FL = self.encs_xs[ln] #[bs,,nc,s0,s1] high level feature
         HL = self.encs_xs[hn] # low level feature
 
@@ -279,18 +279,7 @@ class SeperateModel(BaseModel):
         #self.loss_gdl = self.criterionGDL(self.fakes_r[0], self.real_Y[0])
 
         for t in range(1,self.pre_len):
-            #latent = [self.low_feats[t]]
-            '''latent = [self.high_feats[t],self.low_feats[t]]
-            #latent = [self.latent_y[t]] #no flow
-            enc_xt, fake = self.netCE.forward(self.stacked_X,latent,layer_idx,[])
-            self.fakes += [fake]
-            self.loss_gan += self.criterionGAN(self.netD.forward(self.fakes[t]), True)*lambda_gan
-            self.loss_pix += self.criterionPixel(self.fakes[t],self.real_Y[t])
-            self.loss_gdl += self.criterionGDL(self.fakes[t], self.real_Y[t])'''
-
             latent = [self.feats_val_h[t],self.feats_val_l[t]] #no flow
-            #latent = [self.high_feats[t],self.low_feats[t]]
-            #latent = [self.latent_y[t]] #no flow
             enc_xt, fake = self.netCE.forward(self.stacked_X,latent,layer_idx,[])
             self.fakes += [fake]
             #self.loss_gan += self.criterionGAN(self.netD.forward(self.fakes[t]), True)*lambda_gan
@@ -300,7 +289,7 @@ class SeperateModel(BaseModel):
         #self.loss_gan = self.loss_gan * lambda_gan*0.1
         self.loss_pix = self.loss_pix*lambda_pix
         self.loss_gdl = self.loss_gdl*lambda_gdl
-        self.loss_G =self.loss_pix + self.loss_gdl+self.loss_flow_coh_h+self.loss_flow_coh_1 
+        self.loss_G =self.loss_pix +self.loss_flow_coh_h+self.loss_flow_coh_1 
         self.loss_G.backward()
 
     def forward(self):
@@ -311,7 +300,7 @@ class SeperateModel(BaseModel):
         hidden_state_OPL = self.netOPL.init_hidden(batch_size)
         hidden_state_OPH = self.netOPH.init_hidden(batch_size)
         ln = 4
-        hn = 3
+        hn = 1
         FL = self.encs_xs[ln] #[bs,,nc,s0,s1] high level feature
         HL = self.encs_xs[hn] # low level feature
 
