@@ -271,26 +271,22 @@ class SeperateModel(BaseModel):
         latent = [self.feats_val_l[0]] #no flow
         enc_xt, fake = self.netCE.forward(self.stacked_X,latent,layer_idx,[])
         self.fakes = [fake]
-        #self.loss_gan = self.criterionGAN(self.netD.forward(self.fakes[0]), True)*lambda_gan
+        self.loss_gan = self.criterionGAN(self.netD.forward(self.fakes[0]), True)*lambda_gan
         self.loss_pix = self.criterionPixel(self.fakes[0], self.real_Y[0])
         self.loss_gdl = self.criterionGDL(self.fakes[0], self.real_Y[0])
-
-        #self.loss_gan = self.criterionGAN(self.netD.forward(self.fakes_r[0]), True)*lambda_gan
-        #self.loss_pix = self.criterionPixel(self.fakes_r[0], self.real_Y[0])
-        #self.loss_gdl = self.criterionGDL(self.fakes_r[0], self.real_Y[0])
 
         for t in range(1,self.pre_len):
             latent = [self.feats_val_l[t]] #no flow
             enc_xt, fake = self.netCE.forward(self.stacked_X,latent,layer_idx,[])
             self.fakes += [fake]
-            #self.loss_gan += self.criterionGAN(self.netD.forward(self.fakes[t]), True)*lambda_gan
+            self.loss_gan += self.criterionGAN(self.netD.forward(self.fakes[t]), True)*lambda_gan
             self.loss_pix += self.criterionPixel(self.fakes[t],self.real_Y[t])
             self.loss_gdl += self.criterionGDL(self.fakes[t], self.real_Y[t])
         ####################################################### loss backward ####################################################################
-        #self.loss_gan = self.loss_gan * lambda_gan*0.1
+        self.loss_gan = self.loss_gan * lambda_gan*0.1
         self.loss_pix = self.loss_pix*lambda_pix
         self.loss_gdl = self.loss_gdl*lambda_gdl
-        self.loss_G =self.loss_pix +self.loss_flow_coh_1 
+        self.loss_G =self.loss_pix +self.loss_flow_coh_1 + self.loss_gan
         self.loss_G.backward()
 
     def forward(self):
@@ -308,20 +304,20 @@ class SeperateModel(BaseModel):
         init_offsets_l = self.netOPL.init_offset(batch_size)#Variable(torch.zeros(batch_size,1,FL.size(1)*2,FL.size(2),FL.size(3))).cuda()
         #init_offsets_h = self.netOPH.init_offset(batch_size)# Variable(torch.zeros(batch_size,1,HL.size(1)*2,HL.size(2),HL.size(3))).cuda()
         #------------------------------------------- encode --------------------------------------------
-        
-        hidden_state_OPL, pred_offsets_l, SFL = self.netOPL.forward(FL,init_offsets_l,hidden_state_OPL)
+        it_off_offsets_l = self.netOPL.init_offset(batch_size)
+        hidden_state_OPL, pred_offsets_l,pred_off_offsets_l, SFL = self.netOPL.forward(FL,init_offsets_l,it_off_offsets_l,hidden_state_OPL)
         #hidden_state_OPH, pred_offsets_h, SHL = self.netOPH.forward(HL,init_offsets_h,hidden_state_OPH)
 
         ##------------------------------------------prediction------------------------------------------##
         
-        hidden_state_OPL, pred_offsets_l, SFL = self.netOPL.forward(FL,pred_offsets_l,hidden_state_OPL)       
+        hidden_state_OPL, pred_offsets_l,pred_off_offsets_l, SFL = self.netOPL.forward(FL,pred_offsets_l,pred_off_offsets_l,hidden_state_OPL)       
         self.feats_val_l = [SFL]       
         #hidden_state_OPH, pred_offsets_h, SHL = self.netOPH.forward(HL,pred_offsets_h,hidden_state_OPH)       
         #self.feats_val_h =[SHL]
         
         
         for t in range(1,self.pre_len):
-            hidden_state_OPL, pred_offsets_l, SFL = self.netOPL.forward(FL,pred_offsets_l,hidden_state_OPL)           
+            hidden_state_OPL, pred_offsets_l,pred_off_offsets_l, SFL = self.netOPL.forward(FL,pred_offsets_l,pred_off_offsets_l,hidden_state_OPL)           
             self.feats_val_l += [SFL]
             #hidden_state_OPH, pred_offsets_h, SHL = self.netOPH.forward(HL,pred_offsets_h,hidden_state_OPH)           
             #self.feats_val_h +=[SHL]            
@@ -374,10 +370,10 @@ class SeperateModel(BaseModel):
 
     def optimize_parameters(self):
         self.optimize_generator()
-        #self.optimize_discriminator()
+        self.optimize_discriminator()
 
     def get_current_errors(self):
-        #GAN = self.loss_gan.data[0]
+        GAN = self.loss_gan.data[0]
         PIX = self.loss_pix.data[0]
         GDL = self.loss_gdl.data[0]
         FLOW_L = 0#self.loss_flow_l.data[0]
@@ -387,9 +383,9 @@ class SeperateModel(BaseModel):
         #DES = self.loss_flow_trip_y.data[0]
         COH_L = self.loss_flow_coh_1.data[0]*100
         COH_H =0# self.loss_flow_coh_h.data[0]*100
-        #DES = self.loss_D.data[0]
+        DES = self.loss_D.data[0]
         SIM = 0#self.loss_sim.data[0]
-        return OrderedDict([('Pixel', PIX),('GDL',GDL),('COH_L',COH_L)])#,('COH_H',COH_H)])
+        return OrderedDict([('Pixel', PIX),('GDL',GDL),('COH_L',COH_L),('GAN',GAN),('DES',DES)])
         #return OrderedDict([('Pixel', PIX), ('GDL',GDL ), ('Trans_2',FLOW_H),('Trans_4',FLOW_L),('TRIP_2',TRIP_H),('TRIP_4',TRIP_L),('SIM',SIM)])
 
     def get_current_visuals(self):

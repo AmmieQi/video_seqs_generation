@@ -747,13 +747,17 @@ class OffsetsPredictor(nn.Module):
         self.numdowns = 0
         self.up_num = 1
         csize = shape[0]
-        if csize > 8:
+        print csize
+        while csize > 8:
             self.numdowns += 1
             self.up_num *= 2
             csize /= 2
+            print csize
         self.up_num = min(self.up_num,8)
         if self.up_num %2 == 0:
             self.up_num /= 2
+        print self.numdowns
+        print self.up_num
         #print 'shape: ',shape,' ,input_nc: ', input_nc, ' ,ngf: ', ngf*mult
         self.embedd_1 = nn.Sequential(nn.Conv2d(offset_nc,ngf, kernel_size = 1, padding=0,bias=use_bias),norm_layer(ngf),nn.LeakyReLU(0.2,True))
         self.embedd_2 = nn.Sequential(nn.Conv2d(input_nc+ngf,ngf, kernel_size = 3,stride=1,padding=1,bias=use_bias),norm_layer(ngf),nn.LeakyReLU(0.2,True))
@@ -762,7 +766,7 @@ class OffsetsPredictor(nn.Module):
         self.conv_2 = nn.Sequential(nn.Conv2d(ngf, ngf*2, kernel_size=4, stride=2,padding=1,bias=use_bias),norm_layer(ngf*2),nn.LeakyReLU(0.2,True))  #4 64-->32, 128-->64
         self.conv_3 = nn.Sequential(nn.Conv2d(ngf*2, ngf*2, kernel_size=4, stride=2,padding=1,bias=use_bias),norm_layer(ngf*2),nn.LeakyReLU(0.2,True)) #8 32-->16, 64-->32
         self.conv_4 = nn.Sequential(nn.Conv2d(ngf*2, ngf*4, kernel_size=4, stride=2,padding=1,bias=use_bias),norm_layer(ngf*4),nn.LeakyReLU(0.2,True)) #8 16-->8, 32-->16
-        self.conv_lstm = CLSTM((csize,csize), ngf*self.up_num, filter_size, ngf, nlayers,use_bias)
+        self.conv_lstm = CLSTM((csize,csize), ngf*self.up_num, filter_size, ngf*self.up_num, nlayers,use_bias)
         self.deconv_4 = nn.Sequential(nn.ConvTranspose2d(ngf*8, ngf*2, kernel_size=4, stride=2,padding=1,bias=use_bias),norm_layer(ngf*2),nn.LeakyReLU(0.2,True)) #2 128-->64, 256-->128
         self.deconv_3 = nn.Sequential(nn.ConvTranspose2d(ngf*4, ngf*2, kernel_size=4, stride=2,padding=1,bias=use_bias),norm_layer(ngf*2),nn.LeakyReLU(0.2,True))  #4 64-->32, 128-->64
         self.deconv_2 = nn.Sequential(nn.ConvTranspose2d(ngf*4, ngf*1, kernel_size=4, stride=2,padding=1,bias=use_bias),norm_layer(ngf*1),nn.LeakyReLU(0.2,True)) #8 32-->16, 64-->32
@@ -809,8 +813,9 @@ class OffsetsPredictor(nn.Module):
             enc_4 = self.conv_4(enc_3)
             clstm_out = self.conv_lstm(enc_4.unsqueeze(1), hidden_state)
             enc = clstm_out[1][-1]
-            dec_4 = self.deconv_2(torch.cat([enc,enc_4],1))
-            dec_3 = self.deconv_2(torch.cat([dec_4,enc_3],1))
+            #print enc.size()
+            dec_4 = self.deconv_4(torch.cat([enc,enc_4],1))
+            dec_3 = self.deconv_3(torch.cat([dec_4,enc_3],1))
             dec_2 = self.deconv_2(torch.cat([dec_3,enc_2],1))
             dec_1 = self.deconv_1(torch.cat([dec_2,enc_1],1))
             out = dec_1

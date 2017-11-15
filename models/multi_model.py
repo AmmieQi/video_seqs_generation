@@ -250,7 +250,7 @@ class MultiModel(BaseModel):
         enc_xt, fake = self.netCE.forward(self.X_T,latent,layer_idx,[])
         self.fakes = [fake]
         
-        #self.loss_gan = self.criterionGAN(self.netD.forward(self.fakes[0]), True)*lambda_gan
+        self.loss_gan = self.criterionGAN(self.netD.forward(self.fakes[0]), True)*lambda_gan
         self.loss_pix = self.criterionPixel(self.fakes[0], self.real_Y[0])
         self.loss_pix_trip = self.criterionTrip(self.fakes[0], self.real_Y[0], self.real_X[-1])
         self.loss_gdl = self.criterionGDL(self.fakes[0], self.real_Y[0])
@@ -260,7 +260,7 @@ class MultiModel(BaseModel):
             #latent = [self.low_feats[t]] # flow 1 
             enc_xt, fake = self.netCE.forward(self.X_T,latent,layer_idx,[])            
             self.fakes += [fake]
-            #self.loss_gan += self.criterionGAN(self.netD.forward(self.fakes[t]), True)*lambda_gan
+            self.loss_gan += self.criterionGAN(self.netD.forward(self.fakes[t]), True)*lambda_gan
             self.loss_pix += self.criterionPixel(self.fakes[t],self.real_Y[t])
             self.loss_gdl += self.criterionGDL(self.fakes[t], self.real_Y[t])
             self.loss_pix_trip += self.criterionTrip(self.fakes[t], self.real_Y[t], self.real_X[-1])
@@ -269,7 +269,7 @@ class MultiModel(BaseModel):
         self.loss_pix = self.loss_pix*lambda_pix
         self.loss_gdl = self.loss_gdl*lambda_gdl  
         self.loss_pix_trip  = self.loss_pix_trip*1 
-        self.loss_G = self.loss_pix +self.loss_flow_coh_1+self.loss_flow_coh_h + self.loss_pix_trip#+self.loss_gdl#+ self.loss_flow_coh_h#+self.loss_flow_trip_h + self.loss_flow_trip_l#+ self.loss_flow_trip_y#+self.loss_sim #+ self.loss_gan + self.loss_pix + self.loss_gdl
+        self.loss_G = self.loss_pix +self.loss_flow_coh_1+self.loss_flow_coh_h + self.loss_pix_trip + self.loss_gan
         self.loss_G.backward()
 
 
@@ -367,18 +367,18 @@ class MultiModel(BaseModel):
 
     def optimize_parameters(self):
         self.optimize_generator()
-        #self.optimize_discriminator()
+        self.optimize_discriminator()
 
     def get_current_errors(self):
-        #GAN = self.loss_gan.data[0]
+        GAN = self.loss_gan.data[0]
         PIX = self.loss_pix.data[0]
         GDL = self.loss_gdl.data[0]
-        #DES = self.loss_D.data[0]
+        DES = self.loss_D.data[0]
         TRIP = self.loss_pix_trip.data[0]
         COH_L = self.loss_flow_coh_1.data[0]*1000
-        COH_H = 0#self.loss_flow_coh_h.data[0]*100
+        COH_H = self.loss_flow_coh_h.data[0]*100
         CLST = self.loss_copy_last.data[0]
-        return OrderedDict([('Pixel', PIX),('CopyLast',CLST),('COH_0',COH_L),('COH_1',COH_H),('GDL',GDL),('TRIP',TRIP)])
+        return OrderedDict([('Pixel', PIX),('CopyLast',CLST),('COH_0',COH_L),('COH_1',COH_H),('GDL',GDL),('TRIP',TRIP),('GAN',GAN),('DES',DES)])
         
 
     def get_current_visuals(self):
